@@ -1,0 +1,15 @@
+.DS_Store
+.build/
+.swiftpm/
+build/
+DerivedData/
+xcuserdata/
+*.xcodeproj/
+*.xcworkspace/
+Config/Local.xcconfig
+liboctelium/
+*.ipa
+*.xcarchive
+*.dSYM.zip
+*.mobileprovision
+*.p12

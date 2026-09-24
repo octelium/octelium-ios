@@ -1,0 +1,513 @@
+// Copyright Octelium Labs, LLC. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package octelium.api.main.user.v1;
+
+option go_package = "github.com/octelium/octelium/apis/main/userv1";
+
+import "apis/protobuf/main/metav1/metav1.proto";
+import "google/protobuf/timestamp.proto";
+
+service MainService {
+  // Connect connects to the Cluster
+  rpc Connect(stream ConnectRequest) returns (stream ConnectResponse) {}
+  // Disconnect disconnects from a Cluster
+  rpc Disconnect(DisconnectRequest) returns (DisconnectResponse) {}
+
+  // ListService lists Services
+  rpc ListService(ListServiceOptions) returns (ServiceList) {}
+  // ListNamespace lists Namespaces
+  rpc ListNamespace(ListNamespaceOptions) returns (NamespaceList) {}
+
+  // GetStatus retrieves User status
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse) {}
+
+  // SetServiceConfigs sets the Service configs needed to use the Service from
+  // the client host (e.g. setting up kubeconfigs)
+  rpc SetServiceConfigs(SetServiceConfigsRequest)
+      returns (SetServiceConfigsResponse) {}
+
+  // GetService retrieves a Service
+  rpc GetService(octelium.api.main.meta.v1.GetOptions) returns (Service) {}
+}
+
+message LogoutRequest {}
+message LogoutResponse {}
+
+message GetStatusRequest {}
+message GetStatusResponse {
+  message User {
+    message Spec {
+      enum Type {
+        // TYPE_UNKNOWN is reserved. Not used by any User.
+        TYPE_UNKNOWN = 0;
+        // HUMAN means that the User is used by a human.
+        HUMAN = 1;
+        // WORKLOAD means that the User is used by a workload (e.g. container,
+        // pod, sdk, server, etc...)
+        WORKLOAD = 2;
+      }
+
+      string email = 1;
+      Type type = 2;
+    }
+
+    message Status {}
+    octelium.api.main.meta.v1.Metadata metadata = 1;
+    Spec spec = 2;
+    Status status = 3;
+  }
+  message Session {
+    message Spec {}
+    message Status {
+      enum Type {
+        UNKNOWN = 0;
+        // CLIENT is meant for client-based Sessions (i.e. the octelium client)
+        CLIENT = 1;
+        // CLIENTLESS is meant for client-less/BeyondCorp-based Sessions
+        CLIENTLESS = 2;
+      }
+      Type type = 1;
+      bool isConnected = 2;
+    }
+    octelium.api.main.meta.v1.Metadata metadata = 1;
+    Spec spec = 2;
+    Status status = 3;
+  }
+
+  message Cluster { octelium.api.main.meta.v1.Metadata metadata = 1; }
+
+  string domain = 1;
+  // Cluster is the Cluster's information.
+  Cluster cluster = 2;
+  // User is the User's information.
+  User user = 3;
+  // Session is the Session's information.
+  Session session = 4;
+}
+
+message ConnectRequest {
+  message Initialize {
+    enum L3Mode {
+      // BOTH informs the Cluster that the Connection is ready for dual-stack.
+      BOTH = 0;
+      // V4 informs the Cluster that the Connection only accepts IPv4.
+      V4 = 1;
+      // V6 informs the Cluster that the Connection only accepts IPv6.
+      V6 = 2;
+    }
+
+    message ServiceOptions {
+      // ServeAll informs the Cluster that Connection is ready to serve all
+      // Services that can be hosted by the owner User.
+      bool serveAll = 1;
+
+      message Service { string name = 1; }
+
+      repeated Service services = 2;
+      string labelSelector = 3;
+      // PortStart informs the Cluster of the initial port number that should be
+      // used for serving Services.
+      int32 portStart = 4;
+    }
+
+    enum ConnectionType {
+      // UNSET is not used
+      UNSET = 0;
+      // WIREGUARD means that the connection is WireGuard
+      WIREGUARD = 1;
+      // QUICV0 means that the connection is QUICv0
+      QUICV0 = 2;
+    }
+
+    message PublishedService {
+      // Name is the Service name
+      string name = 1;
+      // Port is the forwarded Service port number on the client host
+      uint32 port = 2;
+      // Address is the forwarded Service host address
+      string address = 3;
+    }
+
+    // L3Mode is the layer-3 mode supported by the Connection.
+    L3Mode l3Mode = 1;
+    // ServiceOptions sets the hosted Services to be served by the Connection.
+    ServiceOptions serviceOptions = 2;
+
+    // ConnectionType is the connection type
+    ConnectionType connectionType = 3;
+
+    // PublishedServices is the list of published Services to the client host
+    repeated PublishedService publishedServices = 4;
+
+    // IgnoreDNS means that the client does not used the Cluster DNS
+    bool ignoreDNS = 5;
+
+    // EnableESSH enables serving embedded SSH
+    bool eSSHEnable = 6;
+    // Port is the listen port of the embedded SSH server
+    int32 eSSHPort = 7;
+
+    bool eSOCKS5Enable = 8;
+    int32 eSOCKS5Port = 9;
+  }
+
+  message KeepAlive { google.protobuf.Timestamp setAt = 1; }
+
+  oneof type {
+    Initialize initialize = 1;
+    KeepAlive keepAlive = 2;
+  }
+}
+
+message DisconnectRequest {}
+
+message DisconnectResponse {}
+message Gateway {
+  message WireGuard {
+    // Port is the Gateway's WireGuard port.
+    int32 port = 1;
+    // PublicKey is the Gateway's WireGuard curve25519 public key.
+    string publicKey = 2;
+    // CIDRs is the list of Gateway CIDRs.
+    // KeepAliveSeconds is the number of seconds to periodically send
+    // WireGuard's keepalive packets.
+    int32 keepAliveSeconds = 3;
+  }
+
+  message QUICV0 {
+    // Port is the Gateway's QUICv0 port.
+    int32 port = 1;
+    int32 keepAliveSeconds = 2;
+  }
+  // ID is the Gateway's ID.
+  string id = 1;
+  // Addresses is the list of the Gateway's public addresses.
+  repeated string addresses = 2;
+  // CIDRs is the list of Gateway CIDRs.
+  repeated string CIDRs = 3;
+  string hostname = 4;
+
+  WireGuard wireguard = 5;
+  QUICV0 quicv0 = 6;
+}
+
+message DNS {
+  // Servers is the list of the Cluster private DNS servers.
+  repeated string servers = 1;
+}
+
+message HostedService {
+
+  enum L4Type {
+    // L4_UNKNOWN is not used
+    L4_UNKNOWN = 0;
+    // TCP means that the Service is TCP-based
+    TCP = 1;
+    // UDP means that the Service is UDP-based
+    UDP = 2;
+  }
+
+  message Upstream {
+    // Host is the upstream host
+    string host = 1;
+    // Port is the upstream listen port
+    int32 port = 2;
+  }
+
+  enum Mode {
+    // MODE_UNSET is not used
+    MODE_UNSET = 0;
+    // MODE_DEFAULT means that the hosted Service is served by an upstream
+    MODE_DEFAULT = 1;
+    // MODE_ESSH means that the host Service is served by the embedded SSH
+    // server
+    MODE_ESSH = 2;
+  }
+
+  // Name is the name of the hosted Service.
+  string name = 1;
+  // Port is the Service's port.
+  uint32 port = 2;
+  // L4Type is the layer-4 type of the Service.
+  L4Type l4Type = 3;
+  // Upstream is the listener upstream's information.
+  Upstream upstream = 4;
+  // Address is the dual-stack address of the Service. It can be null for
+  // upstreams listening on 0.0.0.0 or the Connection addresses.
+  octelium.api.main.meta.v1.DualStackIP address = 5;
+
+  // Mode is the hosted Service mode
+  Mode mode = 6;
+}
+
+message ConnectionState {
+
+  enum L3Mode {
+    // BOTH approves that the Connection is ready for dual-stack.
+    BOTH = 0;
+    // V4 approves that the Connection is ready for IPv4 only.
+    V4 = 1;
+    // V6 approves that the Connection is ready for IPv6 only.
+    V6 = 2;
+  }
+
+  message ServiceOptions {
+    // HostedServices is the list of hosted Services
+    repeated HostedService services = 1;
+  }
+
+  message ServiceConfig {
+    message SSH {
+      // KnownHosts is the list of SSH known hosts
+      repeated string knownHosts = 1;
+      // AuthorizedKeys is the list of SSH authorized keys
+      repeated string authorizedKeys = 2;
+    }
+    oneof type {
+      // SSH sets SSH-specific Service config
+      SSH ssh = 1;
+    }
+  }
+
+  // MTU is the link MTU used at the client side
+  int32 mtu = 1;
+  // X25519Key is the WireGuard private key used by the client
+  bytes x25519Key = 2;
+
+  bytes ed25519Key = 3;
+  // Addresses is the list of the dual-stack addresses of the Connection.
+  repeated octelium.api.main.meta.v1.DualStackNetwork addresses = 4;
+  // Gateways is the list of the Gateways.
+  repeated Gateway gateways = 5;
+  // DNS sets the private DNS information.
+  DNS dns = 6;
+  // ServiceConfigs is the list of Service configs set to the client host
+  repeated ServiceConfig serviceConfigs = 7;
+  // L3Mode sets the layer-3 mode approved by the Cluster.
+  L3Mode l3Mode = 8;
+  // ServiceOptions is the hosted Service information.
+  ServiceOptions serviceOptions = 9;
+  // CIDR is the Cluster Service CIDR.
+  octelium.api.main.meta.v1.DualStackNetwork cidr = 10;
+}
+
+message Service {
+  message Spec {
+    enum Type {
+      UNSET = 0;
+      TCP = 1;
+      UDP = 2;
+      HTTP = 3;
+      SSH = 4;
+      KUBERNETES = 5;
+      POSTGRES = 6;
+      MYSQL = 7;
+      GRPC = 8;
+      WEB = 9;
+      DNS = 10;
+      SOCKS5 = 11;
+      RDP_WEB = 12;
+      MCP = 13;
+      LLM = 14;
+      RDP = 15;
+    }
+
+    // Port is the Service listen port
+    uint32 port = 1;
+    // Type is the Service tpye
+    Type type = 2;
+    // IsTLS shows whether the Service is listening over TLS
+    bool isTLS = 3;
+    // IsPublic means that the Service is publicly exposed and can be accessed
+    // via the client-less/BeyondCorp mode
+    bool isPublic = 4;
+  }
+
+  message Status {
+    // Namespace is the Service's Namespace
+    string namespace = 1;
+    // Addresses is the list of private addresses used by the Service
+    repeated string addresses = 2;
+
+    // PrimaryHostname is the unique primary hostname
+    string primaryHostname = 3;
+  }
+
+  string apiVersion = 1;
+  string kind = 2;
+  octelium.api.main.meta.v1.Metadata metadata = 3;
+  Spec spec = 4;
+  Status status = 5;
+}
+
+message ServiceList {
+  string apiVersion = 1;
+  string kind = 2;
+  repeated Service items = 3;
+  // ListResponseMeta is common information about the list.
+  octelium.api.main.meta.v1.ListResponseMeta listResponseMeta = 4;
+}
+
+message ListServiceOptions {
+  octelium.api.main.meta.v1.CommonListOptions common = 1;
+  string namespace = 2;
+  Service.Spec.Type type = 3;
+}
+
+message ListNamespaceOptions {
+  octelium.api.main.meta.v1.CommonListOptions common = 1;
+}
+
+message Namespace {
+  message Spec {}
+  message Status {}
+
+  string apiVersion = 1;
+  string kind = 2;
+
+  // Metadata is the object's metadata.
+  octelium.api.main.meta.v1.Metadata metadata = 3;
+  // Spec is the Namespace specification.
+  Spec spec = 4;
+  // Status is the current status of the Namespace.
+  Status status = 5;
+}
+
+message NamespaceList {
+  // APIVersion is the API version of the object.
+  string apiVersion = 1;
+  // Kind is the resource name (i.e. `NamespaceList`).
+  string kind = 2;
+  // Items is the list of Namespaces.
+  repeated Namespace items = 3;
+  // ListResponseMeta is common information about the list.
+  octelium.api.main.meta.v1.ListResponseMeta listResponseMeta = 4;
+}
+
+message ConnectResponse {
+  message AddGateway {
+    // Gateway is the added Gateway.
+    Gateway gateway = 1;
+  }
+
+  message UpdateGateway {
+    // Gateway is the updated Gateway.
+    Gateway gateway = 1;
+  }
+
+  message DeleteGateway {
+    // ID is the ID of the Gateway that needs to be deleted.
+    string id = 1;
+  }
+
+  message Disconnect {
+    // Message is an optional message from the Cluster upon disconnect.
+    // Currrently not used.
+    string message = 1;
+  }
+
+  message Message {
+    // Message is a custom message from the Cluster.
+    string message = 1;
+  }
+
+  message UpdateDNS {
+    // DNS is the DNS information.
+    DNS dns = 1;
+  }
+
+  message AddService {
+    // Service is the hosted Service that needs to be added.
+    HostedService service = 1;
+  }
+
+  message UpdateService {
+    // Service is the hosted Service that needs to be updated.
+    HostedService service = 1;
+  }
+
+  message DeleteService {
+    // Name is the name of the Service that needs to be deleted.
+    string name = 1;
+  }
+
+  google.protobuf.Timestamp createdAt = 11;
+
+  oneof Event {
+    // AddGateway is the event to add a Gateway.
+    AddGateway addGateway = 1;
+    // UpdateGateway is the event to update a Gateway.
+    UpdateGateway updateGateway = 2;
+    // DeleteGateway is the event to delete a Gateway.
+    DeleteGateway deleteGateway = 3;
+    // UpdateDNS is the event to update DNS.
+    UpdateDNS updateDNS = 4;
+    // Message is the event to receive a custom message from the Cluster.
+    Message message = 5;
+    // Disconnect is the event to disconnect from the Cluster.
+    Disconnect disconnect = 6;
+    // AddService is the event to add a hosted Service.
+    AddService addService = 7;
+    // UpdateService is the event to update a hosted Service.
+    UpdateService updateService = 8;
+    // DeleteService is the event to delete a hosted Service.
+    DeleteService deleteService = 9;
+    // State is the event that sends the entire state of the Connection.
+    ConnectionState state = 10;
+  }
+}
+
+message SetServiceConfigsRequest {
+  // Name is the Service name
+  string name = 1;
+}
+
+message SetServiceConfigsResponse {
+  message Config {
+    message Kubeconfig {
+      // Content is the kubeconfig content
+      bytes content = 1;
+    }
+
+    message SSH {
+      // KnownHosts is the list of SSH known hosts
+      repeated string knownHosts = 1;
+      // AuthorizedKeys is the list of SSH authorized keys
+      repeated string authorizedKeys = 2;
+    }
+
+    oneof type {
+      // Kubeconfig sets kubeconfig-specific configurations
+      Kubeconfig kubeconfig = 1;
+      SSH ssh = 2;
+    }
+  }
+
+  enum L3Mode {
+    BOTH = 0;
+    V4 = 1;
+    V6 = 2;
+  }
+
+  // Configs is the list of configurations needed to be set at the client side
+  // to use the Service
+  repeated Config configs = 1;
+
+  string host = 2;
+  int32 port = 3;
+  L3Mode l3Mode = 4;
+}

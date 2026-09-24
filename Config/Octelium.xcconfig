@@ -1,0 +1,15 @@
+OCTELIUM_BUNDLE_ID = com.octelium.client
+OCTELIUM_APP_GROUP = group.$(OCTELIUM_BUNDLE_ID)
+OCTELIUM_DEVELOPMENT_TEAM =
+OCTELIUM_APP_PROFILE =
+OCTELIUM_TUNNEL_PROFILE =
+OCTELIUM_RELEASE_TAG =
+OCTELIUM_LDFLAGS = -lresolv -framework CoreFoundation -framework Security
+LIBOCTELIUM_COMMIT =
+LIBOCTELIUM_REF =
+
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1000
+
+#include? "../liboctelium/liboctelium.xcconfig"
+#include? "Local.xcconfig"

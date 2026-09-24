@@ -1,0 +1,245 @@
+// Copyright Octelium Labs, LLC. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package octelium.api.main.meta.v1;
+
+option go_package = "github.com/octelium/octelium/apis/main/metav1";
+
+import "google/protobuf/timestamp.proto";
+
+// Metadata is the metadata that is common to every Cluster resource. It
+// carries the resource's identity (i.e. its UID and name), its
+// human-readable information as well as the Cluster-managed bookkeeping of the
+// resource's versioning and provenance.
+message Metadata {
+
+  // UID is the unique UUID value for the object assigned by the Cluster.
+  // Read-only.
+  string uid = 1;
+
+  // Name is the name of the object. It must be unique within a certain
+  // API/Version/Kind tuple.
+  string name = 2;
+
+  // CreatedAt is the timestamp of creation of the object. Read-only.
+  google.protobuf.Timestamp createdAt = 3;
+
+  // UpdatedAt is the timestamp of when the object was last updated.
+  // Read-only.
+  google.protobuf.Timestamp updatedAt = 4;
+
+  // DisplayName is the name that can be shown publicly for the object. Doesn't
+  // need to be unique.
+  string displayName = 5;
+  // Description is used to describe the object in a short sentence. Maximum
+  // characters are 1000.
+  string description = 6;
+
+  // Labels is a map of string keys and values to organize objects.
+  map<string, string> labels = 7;
+
+  // Tags is an optional array of tags that classify the Resource.
+  repeated string tags = 8;
+
+  // Annotations is a map of string keys and values that can be used to store
+  // arbitrary metadata about the object.
+  map<string, string> annotations = 9;
+  // PicURL is the Picture URL of the resource.
+  string picURL = 10;
+
+  // ResourceVersion is a unique ID that represent the current version of the
+  // resource object. Used by the Cluster to detect updates.
+  string resourceVersion = 11;
+
+  // LastResourceVersion is the ResourceVersion of the last update of the
+  // Resource.
+  string lastResourceVersion = 12;
+
+  // ActorRef is the object reference to the Actor resource, typically a
+  // Session, who is responsible for the current resource change. If ActorRef is
+  // not set, then the current change of the resource was done by the Cluster
+  ObjectReference actorRef = 13;
+
+  // ActorOperation is the gRPC full method triggered by the actorRef to modify
+  // the Resource
+  string actorOperation = 14;
+
+  // IsSystem means that the resource is created by the Cluster and it cannot be
+  // managed by the administrators. Read-only.
+  bool isSystem = 15;
+
+  // SpecLabels is map used internally by the Cluster for quick searches among
+  // lists of objects. Read-only.
+  map<string, string> specLabels = 16;
+
+  // IsUserHidden means that the resource object is hidden from ordinary Users
+  // and should not be exposed via the User APIs.
+  bool isUserHidden = 17;
+
+  // IsSystemHidden means that the resource object is hidden by the Cluster and
+  // should not be exposed via the APIs.
+  bool isSystemHidden = 18;
+  // SystemLabels is a similar map to specLabels. Used only by the Cluster.
+  map<string, string> systemLabels = 19;
+}
+
+// ObjectReference is a reference to another Cluster resource. It identifies
+// the referenced resource by its kind and either its UID or its name.
+message ObjectReference {
+  // APIVersion is the API version of the reference resource
+  string apiVersion = 1;
+  // Kind is the resource kind. A kind is unique per an APIVersion.
+  string kind = 2;
+  // UID is the resource object UID. A UID is unique across the entire Cluster.
+  string uid = 3;
+  // Name is the resource object name. A name is unique per a certain kind.
+  string name = 4;
+  // ResourceVersion is the resourceVersion of the resource.
+  string resourceVersion = 5;
+}
+
+// Duration is a length of time that is expressed in a single unit of choice.
+// Exactly one of the units is set (e.g. `seconds: 30`).
+message Duration {
+  // Type sets the unit in which the Duration is expressed
+  oneof type {
+    // Milliseconds is the duration set in milliseconds
+    uint32 milliseconds = 1;
+    // Seconds is the duration set in seconds
+    uint32 seconds = 2;
+    // Minutes is the duration set in minutes
+    uint32 minutes = 3;
+    // Hours is the duration set in hours
+    uint32 hours = 4;
+    // Days is the duration set in days
+    uint32 days = 5;
+    // Weeks is the duration set in weeks
+    uint32 weeks = 6;
+    // Months is the duration set in months
+    uint32 months = 7;
+  }
+}
+
+// DeleteOptions is the request of the Delete methods. The object to be deleted
+// is identified by either its UID or its name.
+message DeleteOptions {
+  // UID is the object's UID.
+  string uid = 1;
+  // Name is the object name that needs to be deleted. Either the name or the
+  // UID must be used.
+  string name = 2;
+}
+
+// GetOptions is the request of the Get methods. The object to be retrieved is
+// identified by either its UID or its name.
+message GetOptions {
+  // UID is the object's UID
+  string uid = 1;
+  // Name is the object's name
+  string name = 2;
+}
+
+// OperationResult is the response of the methods that return no resource (e.g.
+// the Delete methods). It is intentionally empty.
+message OperationResult {}
+
+// DualStackIP is a pair of an IPv4 and an IPv6 address.
+message DualStackIP {
+  // IPv4 is the IPv4 address.
+  string ipv4 = 1;
+  // IPv6 is the IPv6 address.
+  string ipv6 = 2;
+}
+
+// DualStackNetwork is a pair of an IPv4 and an IPv6 network range.
+message DualStackNetwork {
+  // V4 is the IPv4 network address represented as CIDR notation IP address
+  // and prefix length (e.g. `192.0.2.0/24`).
+  string v4 = 1;
+  // V6 is the IPv6 network address represented as CIDR notation IP address
+  // and prefix length (e.g. `2001:db8::/32`).
+  string v6 = 2;
+}
+
+// ListResponseMeta is the pagination information that is common to every List
+// response.
+message ListResponseMeta {
+  // Page is the page number. Starts with zero.
+  uint32 page = 1;
+  // ItemsPerPage is the number of items per page.
+  uint32 itemsPerPage = 2;
+  // TotalCount is the total count of items that can be obtained.
+  uint32 totalCount = 3;
+  // HasMore shows whether a next page is available
+  bool hasMore = 4;
+}
+
+// LogMetadata is the metadata that is common to every log entry (i.e. the
+// AccessLogs and the ComponentLogs). It is the log-entry counterpart of the
+// Metadata of the Cluster resources.
+message LogMetadata {
+  // ID is the unique ID for the log entry
+  string id = 1;
+  // CreatedAt is the timestamp of creation.
+  google.protobuf.Timestamp createdAt = 2;
+  // ActorRef is the reference of the actor whose action triggered the log
+  // entry (i.e. the User, their Session and Device if available)
+  octelium.api.main.meta.v1.ObjectReference actorRef = 3;
+  // TargetRef is the reference of the target of the action that triggered the
+  // log entry (e.g. the Service and its Namespace in the case of a SERVICE log
+  // entry)
+  octelium.api.main.meta.v1.ObjectReference targetRef = 4;
+}
+
+// CommonListOptions is the listing options that are common to every List
+// request.
+message CommonListOptions {
+  // OrderBy sets the ordering of the returned list
+  message OrderBy {
+    // Type is the field by which the list is ordered
+    enum Type {
+      // TYPE_UNSET falls back to the default behavior which is to order the
+      // list by the creation date.
+      TYPE_UNSET = 0;
+      // NAME orders the list by the objects' names
+      NAME = 1;
+      // CREATED_AT orders the list by the objects' creation dates
+      CREATED_AT = 2;
+    }
+
+    // Mode is the direction in which the list is ordered
+    enum Mode {
+      // MODE_UNSET falls back to the default direction
+      MODE_UNSET = 0;
+      // ASC orders the list in an ascending order
+      ASC = 1;
+      // DESC orders the list in a descending order
+      DESC = 2;
+    }
+
+    // Type is the field by which the list is ordered
+    Type type = 1;
+    // Mode is the direction in which the list is ordered
+    Mode mode = 2;
+  }
+
+  // Page is the page number, starts at zero.
+  uint32 page = 1;
+  // ItemsPerPage is the items per page
+  uint32 itemsPerPage = 2;
+  // OrderBy orders the list
+  OrderBy orderBy = 3;
+}

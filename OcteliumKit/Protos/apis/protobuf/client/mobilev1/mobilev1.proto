@@ -1,0 +1,311 @@
+// Copyright Octelium Labs, LLC. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package octelium.api.client.mobile.v1;
+
+import "apis/protobuf/client/daemonv1/daemonv1.proto";
+
+option go_package = "github.com/octelium/octelium/apis/client/mobilev1";
+
+import "google/protobuf/timestamp.proto";
+
+// MainService is the API of liboctelium, the Octelium client library embedded
+// by the Octelium Android and iOS applications.
+//
+// The Service is never served over the network. It is invoked in-process by
+// the native layer of the application (i.e. the host) via the C ABI of
+// liboctelium where a method is identified by its name (e.g. `Connect`) and
+// both its request and its response are serialized protobuf messages. A
+// failed call returns a gRPC status code along with a human-readable message.
+//
+// The buffers passed by the host remain owned by the host while the output
+// buffers are allocated by liboctelium and they must be released via
+// `octelium_free`. The output pointers are required. The Event and
+// PlatformRequest callbacks can be invoked from arbitrary threads and their
+// buffers are only valid during the callback. A PlatformRequest can be
+// completed from within its callback or later from any thread. The host must
+// never call `octelium_client_free` from within a callback. No callback is
+// invoked once `octelium_client_free` returns.
+//
+// The Service intentionally reuses the local state model of the Octelium
+// daemon API (i.e. octelium.api.client.daemon.v1) so that the mobile and the
+// desktop applications share the same semantics of the domains, the
+// Operations, the settings and the errors. However, the host itself owns the
+// OS VPN lifecycle (i.e. VpnService on Android and NEPacketTunnelProvider on
+// iOS). liboctelium asks the host to apply the tunnel configuration via
+// PlatformRequest and it reports its state via Event.
+//
+// A liboctelium instance supports at most one connected domain at a time since
+// the mobile OSes provide a single VPN interface per application. The
+// ConnectionOptions fields that are not supported by the mobile clients (i.e.
+// the KERNEL and GVISOR implementation modes, the served and published
+// Services, the embedded SSH and SOCKS5 servers and the local DNS server) are
+// rejected with INVALID_ARGUMENT. The autoConnect setting is persisted but
+// acting upon it is the responsibility of the host (e.g. via the Android
+// always-on VPN or the iOS on-demand rules).
+service MainService {
+  // GetInfo retrieves information about liboctelium and about the version of
+  // this API it implements.
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse) {}
+
+  // GetStatus retrieves a complete snapshot of the local Octelium state. The
+  // same snapshot is also pushed via Event whenever the state changes.
+  rpc GetStatus(octelium.api.client.daemon.v1.GetStatusRequest)
+      returns (octelium.api.client.daemon.v1.GetStatusResponse) {}
+
+  // Authenticate starts authenticating to a Cluster.
+  //
+  // In the browser mode, the returned Operation is WAITING_FOR_USER and its
+  // Action contains the Portal login URL. The host opens it via the system
+  // authentication session (i.e. ASWebAuthenticationSession on iOS and Custom
+  // Tabs on Android) and it passes the URL received at
+  // GetInfoResponse.authenticationCallbackURL to CompleteAuthentication.
+  rpc Authenticate(octelium.api.client.daemon.v1.AuthenticateRequest)
+      returns (octelium.api.client.daemon.v1.Operation) {}
+
+  // CompleteAuthentication completes a browser AUTHENTICATE Operation that is
+  // WAITING_FOR_USER using the callback URL received by the host. An invalid
+  // callback URL returns INVALID_ARGUMENT and it leaves the Operation waiting.
+  rpc CompleteAuthentication(CompleteAuthenticationRequest)
+      returns (octelium.api.client.daemon.v1.Operation) {}
+
+  // Connect starts connecting to a Cluster. liboctelium asks the host to
+  // establish the tunnel via PlatformRequest.ApplyTunnelConfiguration.
+  rpc Connect(octelium.api.client.daemon.v1.ConnectRequest)
+      returns (octelium.api.client.daemon.v1.Operation) {}
+
+  // Disconnect starts disconnecting from a Cluster. The host tears down the
+  // tunnel once the Connection of the domain becomes DISCONNECTED.
+  rpc Disconnect(octelium.api.client.daemon.v1.DisconnectRequest)
+      returns (octelium.api.client.daemon.v1.Operation) {}
+
+  rpc Logout(octelium.api.client.daemon.v1.LogoutRequest)
+      returns (octelium.api.client.daemon.v1.Operation) {}
+
+  rpc DeleteDomain(octelium.api.client.daemon.v1.DeleteDomainRequest)
+      returns (octelium.api.client.daemon.v1.Operation) {}
+
+  rpc GetOperation(octelium.api.client.daemon.v1.GetOperationRequest)
+      returns (octelium.api.client.daemon.v1.Operation) {}
+
+  rpc CancelOperation(octelium.api.client.daemon.v1.CancelOperationRequest)
+      returns (octelium.api.client.daemon.v1.Operation) {}
+
+  // GetAPICredential retrieves the current short-lived Cluster API access
+  // token of a domain. The refresh token is never exposed. The host is
+  // supposed to keep the access token in memory within its native layer.
+  rpc GetAPICredential(octelium.api.client.daemon.v1.GetAPICredentialRequest)
+      returns (octelium.api.client.daemon.v1.GetAPICredentialResponse) {}
+
+  rpc UpdateDomainSettings(
+      octelium.api.client.daemon.v1.UpdateDomainSettingsRequest)
+      returns (octelium.api.client.daemon.v1.DomainSettings) {}
+
+  // SetNetworkState informs liboctelium of the state of the underlying
+  // network as observed by the host (i.e. ConnectivityManager on Android and
+  // NWPathMonitor on iOS). liboctelium suspends reconnecting while no network
+  // is available and it rebinds the tunnel transport whenever the underlying
+  // network changes.
+  rpc SetNetworkState(SetNetworkStateRequest)
+      returns (SetNetworkStateResponse) {}
+}
+
+// Config is the configuration of a liboctelium instance. The host passes it
+// upon creating the instance.
+message Config {
+  enum Platform {
+    PLATFORM_UNSPECIFIED = 0;
+    ANDROID = 1;
+    IOS = 2;
+  }
+
+  // Device is the identity of the device used upon registering it to the
+  // Cluster.
+  message Device {
+    // ID is a stable identifier of the installation of the application (e.g.
+    // identifierForVendor on iOS). It is required.
+    string id = 1;
+    // Name is the user-visible name of the device.
+    string name = 2;
+    string serialNumber = 3;
+  }
+
+  Platform platform = 1;
+
+  // StateDir is the private directory in which liboctelium persists its
+  // state. On iOS, it is supposed to be within the App Group container that
+  // is shared by the application and its packet tunnel provider.
+  string stateDir = 2;
+
+  // StateKey is the 32-byte AES-256 key used to encrypt the persisted state
+  // including the credentials. The host is supposed to generate it once and
+  // to keep it in the platform secure storage (i.e. a non-exportable Android
+  // Keystore key wrapping it, or an iOS Keychain item of a shared access group
+  // that is only accessible after the first unlock of this device).
+  bytes stateKey = 3;
+
+  Device device = 4;
+
+  // LogLevel is the minimum level of the Log Events. It defaults to INFO.
+  Log.Level logLevel = 5;
+}
+
+message GetInfoRequest {}
+
+message GetInfoResponse {
+  // Version is the semantic version of liboctelium.
+  string version = 1;
+
+  // APIMajorVersion is the major version of this API. A host must consider a
+  // different major version as incompatible.
+  uint32 apiMajorVersion = 2;
+
+  // APIMinorVersion is the backward-compatible minor version of this API.
+  uint32 apiMinorVersion = 3;
+
+  // InstanceID uniquely identifies this liboctelium instance.
+  string instanceID = 4;
+
+  // AuthenticationCallbackURL is the fixed callback URL of the browser
+  // authentication. The host registers its scheme and it passes the URLs
+  // received at it to CompleteAuthentication.
+  string authenticationCallbackURL = 5;
+}
+
+message CompleteAuthenticationRequest {
+  // OperationID is the ID of the AUTHENTICATE Operation.
+  string operationID = 1;
+
+  // CallbackURL is the complete callback URL received by the host.
+  string callbackURL = 2;
+}
+
+message SetNetworkStateRequest {
+  // IsAvailable shows whether there is a usable underlying network.
+  bool isAvailable = 1;
+
+  // ID is an opaque identifier of the current underlying network (e.g. the
+  // network handle on Android). A different ID means that the underlying
+  // network has changed (e.g. from Wi-Fi to cellular).
+  string id = 2;
+}
+
+message SetNetworkStateResponse {}
+
+// TunnelConfiguration is the complete desired configuration of the OS tunnel
+// interface. The host applies it as a whole (i.e. via VpnService.Builder on
+// Android and NEPacketTunnelNetworkSettings on iOS).
+message TunnelConfiguration {
+  message DNS {
+    // Servers is the list of the Cluster DNS servers.
+    repeated string servers = 1;
+
+    // SearchDomains is the list of the DNS search domains.
+    repeated string searchDomains = 2;
+
+    // MatchDomains is the list of the domains whose queries are resolved by
+    // the servers while the queries of the other domains are resolved by the
+    // normal resolver of the host (i.e. NEDNSSettings.matchDomains on iOS).
+    // The hosts that cannot resolve per domain (i.e. Android) use the servers
+    // for all the queries since the Cluster DNS forwards the queries that do
+    // not belong to the Cluster.
+    repeated string matchDomains = 3;
+
+    // MatchAllDomains means that the servers resolve all the queries (i.e.
+    // the full DNS mode).
+    bool matchAllDomains = 4;
+  }
+
+  // Addresses is the list of the addresses of the Connection in the CIDR
+  // notation.
+  repeated string addresses = 1;
+
+  // Routes is the list of the destination prefixes in the CIDR notation that
+  // are routed via the tunnel. A default route is never included.
+  repeated string routes = 2;
+
+  // DNS is unset whenever the tunnel must not configure the DNS.
+  DNS dns = 3;
+
+  int32 mtu = 4;
+}
+
+// PlatformRequest is an asynchronous request from liboctelium to the host.
+// The host completes every PlatformRequest exactly once with a
+// PlatformResponse.
+message PlatformRequest {
+  // ApplyTunnelConfiguration asks the host to establish the tunnel interface
+  // or to reconfigure it. The host is supposed to exclude its own traffic from
+  // the tunnel (e.g. via VpnService.Builder.addDisallowedApplication on
+  // Android).
+  message ApplyTunnelConfiguration {
+    string domain = 1;
+
+    // Generation monotonically increases with every ApplyTunnelConfiguration
+    // of the same Connection.
+    uint64 generation = 2;
+
+    TunnelConfiguration configuration = 3;
+  }
+
+  oneof type {
+    ApplyTunnelConfiguration applyTunnelConfiguration = 1;
+  }
+}
+
+message PlatformResponse {
+  message ApplyTunnelConfiguration {
+    // TunFD is the file descriptor of the established tunnel interface. The
+    // host retains its ownership and liboctelium duplicates it before
+    // completing the request. It is required on Android. On iOS, it can be
+    // omitted in which case liboctelium finds the utun file descriptor of the
+    // packet tunnel provider by itself.
+    optional int32 tunFD = 1;
+  }
+
+  message Error {
+    string message = 1;
+  }
+
+  oneof type {
+    ApplyTunnelConfiguration applyTunnelConfiguration = 1;
+    Error error = 2;
+  }
+}
+
+message Log {
+  enum Level {
+    LEVEL_UNSPECIFIED = 0;
+    DEBUG = 1;
+    INFO = 2;
+    WARN = 3;
+    ERROR = 4;
+  }
+
+  Level level = 1;
+  google.protobuf.Timestamp createdAt = 2;
+  string message = 3;
+}
+
+// Event is an asynchronous notification from liboctelium to the host. Events
+// are delivered sequentially.
+message Event {
+  oneof type {
+    // Status is a complete snapshot of the local Octelium state.
+    octelium.api.client.daemon.v1.GetStatusResponse status = 1;
+    Log log = 2;
+  }
+}

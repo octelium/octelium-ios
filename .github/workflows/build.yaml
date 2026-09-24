@@ -1,0 +1,103 @@
+name: Build iOS artifacts
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+    inputs:
+      octelium_ref:
+        description: The Octelium branch, tag or commit whose liboctelium is bundled
+        required: false
+        default: main
+
+jobs:
+  resolve-octelium:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: octelium/octelium
+          ref: ${{ inputs.octelium_ref }}
+          path: octelium-source
+          persist-credentials: false
+      - id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(git -C octelium-source rev-parse HEAD)"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve-octelium
+    runs-on: macos-26
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: octelium/octelium
+          ref: ${{ needs.resolve-octelium.outputs.commit }}
+          path: octelium-source
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: octelium-source/go.work
+          cache-dependency-path: octelium-source/client/liboctelium/go.sum
+      - name: Build liboctelium from ${{ inputs.octelium_ref }}
+        env:
+          OCTELIUM_SOURCE_DIR: ${{ github.workspace }}/octelium-source
+        run: ./scripts/build-liboctelium.sh
+      - name: Generate the project
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          ./scripts/generate-project.sh
+      - name: Select a simulator
+        shell: bash
+        run: ./scripts/select-simulator.sh >> "$GITHUB_ENV"
+      - name: Test
+        run: |
+          swift test --package-path OcteliumKit
+          xcodebuild test -project Octelium.xcodeproj -scheme Octelium \
+            -destination "$SIMULATOR" -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
+      - name: Build application
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild archive -project Octelium.xcodeproj -scheme Octelium -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath build/Octelium.xcarchive \
+            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
+          xcodebuild build -project Octelium.xcodeproj -scheme Octelium -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator \
+            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
+      - name: Collect artifacts
+        env:
+          OCTELIUM_COMMIT: ${{ needs.resolve-octelium.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$PWD/release-output"
+          mkdir "$output"
+          mkdir -p build/ipa/Payload
+          cp -R build/Octelium.xcarchive/Products/Applications/Octelium.app build/ipa/Payload/
+          (cd build/ipa && zip -qry "$output/octelium-ios-release-unsigned.ipa" Payload)
+          (cd build && zip -qry "$output/octelium-ios-release-unsigned.xcarchive.zip" Octelium.xcarchive)
+          (cd build/simulator/Build/Products/Debug-iphonesimulator && zip -qry "$output/octelium-ios-simulator.app.zip" Octelium.app)
+          printf '%s\n' "$OCTELIUM_COMMIT" > "$output/OCTELIUM_COMMIT"
+          git rev-parse HEAD > "$output/OCTELIUM_IOS_COMMIT"
+          cd "$output"
+          shasum -a 256 * > SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: octelium-ios
+          path: release-output/*
+          if-no-files-found: error
+          retention-days: 14

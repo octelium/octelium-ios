@@ -1,0 +1,4 @@
+module COctelium [system] {
+    header "octelium.h"
+    export *
+}

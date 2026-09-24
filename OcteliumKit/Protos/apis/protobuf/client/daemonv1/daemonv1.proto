@@ -1,0 +1,754 @@
+// Copyright Octelium Labs, LLC. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package octelium.api.client.daemon.v1;
+
+import "apis/protobuf/main/metav1/metav1.proto";
+
+option go_package = "github.com/octelium/octelium/apis/client/daemonv1";
+
+import "google/protobuf/timestamp.proto";
+
+// MainService is the local Octelium client daemon API.
+//
+// The Service is implemented by the privileged Octelium daemon (i.e.
+// `octelium daemon`) running on the client host and it is consumed by local
+// unprivileged frontends such as the Octelium CLI itself and the Octelium
+// desktop application.
+//
+// The Service is intentionally NOT a proxy to the Octelium Cluster API.
+// Operations that merely read or modify Cluster resources (e.g. ListService,
+// ListNamespace, GetStatus) are directly served by the Cluster API. This
+// Service is limited to the operations whose state and effects belong to the
+// local host (i.e. authentication, credential storage, Connection lifecycle,
+// local networking and the locally persisted per-domain preferences).
+//
+// The transport is local-only. Unix domain sockets are used on Linux and macOS
+// while named pipes are used on Windows. The daemon derives the identity of
+// the calling OS principal from the IPC transport itself. Caller identity is
+// never read from protobuf fields or from gRPC metadata.
+//
+// The daemon is owned by exactly one OS principal. The first RPC of a daemon
+// process binds the daemon to the OS principal of its caller for the entire
+// lifetime of the daemon process. Every subsequent RPC of another OS principal
+// returns PERMISSION_DENIED. The daemon additionally uses the identity of its
+// owner wherever the host effects of a Connection belong to a specific OS user
+// (e.g. the host identity of the embedded SSH sessions, the home directory of
+// the SSH Service configuration) instead of using its own privileged identity.
+//
+// The daemon stores the credentials and the settings in the Octelium home
+// directory of its owner which is the very same local state used by the
+// Octelium CLI. In other words, authenticating via this API also authenticates
+// the CLI of the owner and vice versa. The daemon periodically reconciles its
+// state with that of the local state.
+//
+// A Cluster domain becomes known to the daemon either via Authenticate or via
+// UpdateDomainSettings or via the local state of the owner. The methods that
+// operate on a domain return NOT_FOUND for an unknown domain. Cluster domains
+// are canonicalized by the daemon. Therefore the domain of a response can
+// differ from the domain of the request.
+service MainService {
+  // GetInfo retrieves information about the running Octelium daemon and about
+  // the version of this API it implements.
+  //
+  // GetInfo is the RPC that a frontend is supposed to call on its launch. It
+  // binds the daemon to the calling OS principal whenever the daemon is not
+  // already bound to one.
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse) {}
+
+  // GetStatus retrieves a complete snapshot of the local Octelium state of the
+  // owner of the daemon.
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse) {}
+
+  // WatchStatus watches the local Octelium state.
+  //
+  // The daemon sends the complete current state immediately once the stream is
+  // established and it sends another complete state whenever the state
+  // changes. In other words, the messages are snapshots and they are not
+  // incremental events. A frontend that loses the stream simply re-subscribes
+  // and rebuilds its entire state out of the first received message.
+  rpc WatchStatus(WatchStatusRequest) returns (stream GetStatusResponse) {}
+
+  // Authenticate starts authenticating the calling OS principal to a Cluster.
+  //
+  // Authentication is asynchronous. In the browser mode, the daemon generates
+  // the PKCE code verifier, binds the loopback callback listener and builds
+  // the Portal login URL before returning an Operation whose Action contains
+  // the URL that the frontend is supposed to open using the interactive user's
+  // system browser. The daemon itself never opens a browser since it runs as
+  // root/SYSTEM and possibly in a non-interactive session.
+  //
+  // The daemon receives the browser callback at its own loopback listener,
+  // redeems the authentication token, carries out the post-authentication
+  // steps (e.g. Device registration) and stores the resulting credentials.
+  //
+  // At most one lifecycle Operation can be active per domain at a time.
+  // Otherwise, the RPC returns FAILED_PRECONDITION.
+  rpc Authenticate(AuthenticateRequest) returns (Operation) {}
+
+  // Connect starts connecting the host to a Cluster.
+  //
+  // The RPC returns as soon as the Operation is accepted. The progress of the
+  // Connection is observed via WatchStatus or GetOperation.
+  //
+  // Multiple domains can be connected concurrently. However, there is at most
+  // one Connection per domain.
+  //
+  // If options is unset, the daemon uses the persisted DomainSettings of the
+  // domain and falls back to its own defaults for whatever is unset. If
+  // options is set, it applies to this Connection only and it is not
+  // persisted.
+  rpc Connect(ConnectRequest) returns (Operation) {}
+
+  // Disconnect starts disconnecting the host from a Cluster. Disconnecting an
+  // already disconnected domain succeeds while disconnecting an unknown domain
+  // returns NOT_FOUND.
+  //
+  // Disconnect always expresses the desired state of the domain. An
+  // Authenticate or a Connect Operation that is still in progress is canceled
+  // by the daemon itself and the returned Disconnect Operation supersedes it.
+  rpc Disconnect(DisconnectRequest) returns (Operation) {}
+
+  // Logout logs the calling OS principal out of a Cluster.
+  //
+  // Logout disconnects the domain if needed, invalidates the Cluster Session
+  // whenever possible and removes the locally stored credentials. The
+  // persisted DomainSettings of the domain are not removed. Use DeleteDomain
+  // in order to remove the domain entirely.
+  //
+  // Like Disconnect, Logout supersedes an Authenticate or a Connect Operation
+  // that is still in progress.
+  rpc Logout(LogoutRequest) returns (Operation) {}
+
+  // GetOperation retrieves an Operation by its ID.
+  //
+  // An Operation is only visible to the OS principal that owns it. Completed
+  // Operations are retained for a bounded implementation-defined period after
+  // which the RPC returns NOT_FOUND.
+  rpc GetOperation(GetOperationRequest) returns (Operation) {}
+
+  // CancelOperation requests the cancellation of an Operation. Cancellation is
+  // cooperative. A successful RPC does not mean that the Operation has already
+  // reached the CANCELED state by the time the response is returned.
+  //
+  // Canceling an Operation that already reached a terminal state is a no-op
+  // that returns the Operation as it is. Canceling an Operation whose
+  // cancellable is false returns FAILED_PRECONDITION.
+  rpc CancelOperation(CancelOperationRequest) returns (Operation) {}
+
+  // GetAPICredential retrieves the current short-lived Cluster API access
+  // credential of a domain so that a local frontend can natively access the
+  // Cluster API on its own.
+  //
+  // Refresh tokens and any other persistent credentials are never exposed via
+  // this API. The accessToken is meant to be kept in the memory of the calling
+  // process and it must never be persisted by the caller. This RPC spares the
+  // frontends the renewal of the credentials as opposed to being a privilege
+  // boundary since the credentials are stored in the Octelium home directory of
+  // the owner itself which is readable by the owner.
+  //
+  // The daemon transparently renews the access token as long as renewing it
+  // does not require the interaction of the user. If no usable credential can
+  // be obtained without such an interaction, the RPC returns UNAUTHENTICATED
+  // and the caller is supposed to start or to watch an Authenticate Operation
+  // instead.
+  rpc GetAPICredential(GetAPICredentialRequest)
+      returns (GetAPICredentialResponse) {}
+
+  // UpdateDomainSettings replaces the persisted local settings of a domain.
+  //
+  // Updating the settings does not reconfigure an already active Connection.
+  // The new settings are used by the subsequent Connect Operations. However,
+  // enabling autoConnect for an authenticated domain that is currently
+  // disconnected does start a Connect Operation.
+  rpc UpdateDomainSettings(UpdateDomainSettingsRequest)
+      returns (DomainSettings) {}
+
+  // DeleteDomain removes a domain entirely. The domain is disconnected and
+  // logged out if needed and both its credentials and its persisted
+  // DomainSettings are removed.
+  //
+  // Like Disconnect, DeleteDomain supersedes an Authenticate or a Connect
+  // Operation that is still in progress. The domain disappears from the status
+  // once the Operation succeeds. Until then it is still visible and it rejects
+  // the other lifecycle Operations.
+  rpc DeleteDomain(DeleteDomainRequest) returns (Operation) {}
+}
+
+message GetInfoRequest {}
+
+message GetInfoResponse {
+  // Version is the semantic version of the running Octelium daemon.
+  string version = 1;
+
+  // APIMajorVersion is the major version of this API. A frontend must consider
+  // a different major version as incompatible.
+  uint32 apiMajorVersion = 2;
+
+  // APIMinorVersion is the backward-compatible minor version of this API.
+  uint32 apiMinorVersion = 3;
+
+  // InstanceID uniquely identifies this daemon process instance. It changes
+  // whenever the daemon restarts and it is used together with the Status
+  // revision in order to detect daemon restarts.
+  string instanceID = 4;
+
+  // Principal is the OS principal that owns this daemon process. It is derived
+  // by the daemon out of the IPC transport of the RPC that bound it.
+  Principal principal = 5;
+}
+
+// Principal is the identity of a local caller as derived from the OS.
+message Principal {
+  // ID is the UID on Linux/macOS and the SID on Windows.
+  string id = 1;
+
+  // Name is the OS user name whenever it can be resolved by the daemon.
+  string name = 2;
+}
+
+message GetStatusRequest {}
+
+message WatchStatusRequest {}
+
+// GetStatusResponse is a complete snapshot of the local Octelium state of the
+// owner of the daemon.
+message GetStatusResponse {
+  // InstanceID identifies the daemon process that produced this snapshot.
+  string instanceID = 1;
+
+  // Revision monotonically increases for the lifetime of instanceID whenever
+  // the state represented by this snapshot changes.
+  uint64 revision = 2;
+
+  // UpdatedAt is the time at which this snapshot was produced.
+  google.protobuf.Timestamp updatedAt = 3;
+
+  // Domains is the local state of the known domains of the owner of the
+  // daemon. A domain appears here once it is either authenticated, or
+  // connected or has persisted DomainSettings.
+  repeated DomainState domains = 4;
+}
+
+// DomainState is the complete local state of a single Cluster domain.
+message DomainState {
+  string domain = 1;
+
+  AuthenticationStatus authentication = 2;
+
+  ConnectionStatus connection = 3;
+
+  // LastOperation is the most recent lifecycle Operation of the domain if any.
+  // It is still in progress whenever its state is PENDING, RUNNING or
+  // WAITING_FOR_USER and there is at most one such Operation per domain at a
+  // time. Otherwise it describes the outcome of the Operation so that a
+  // frontend does not have to call GetOperation in order to render it.
+  Operation lastOperation = 4;
+
+  // LastError is the most recent error of the domain. The daemon clears it
+  // once the condition is resolved or once a later successful Operation
+  // supersedes it.
+  Error lastError = 5;
+
+  // Settings is the persisted settings of the domain as they are stored by the
+  // daemon.
+  DomainSettings settings = 6;
+}
+
+message AuthenticationStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+
+    // LOGGED_OUT means that the daemon has no usable credentials for the
+    // domain.
+    LOGGED_OUT = 1;
+
+    // AUTHENTICATING means that an authentication Operation is in progress.
+    AUTHENTICATING = 2;
+
+    // AUTHENTICATED means that the daemon has usable credentials for the
+    // domain.
+    AUTHENTICATED = 3;
+
+    // LOGGING_OUT means that a Logout Operation is in progress.
+    LOGGING_OUT = 4;
+  }
+
+  State state = 1;
+
+  // AuthenticatedAt is the time at which the current credentials were
+  // obtained.
+  google.protobuf.Timestamp authenticatedAt = 2;
+
+  // ExpiresAt is the time at which the current credentials can no longer be
+  // renewed without a new authentication. It is unset whenever the Cluster
+  // does not provide such information.
+  google.protobuf.Timestamp expiresAt = 3;
+}
+
+message ConnectionStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+
+    DISCONNECTED = 1;
+
+    CONNECTING = 2;
+
+    CONNECTED = 3;
+
+    // RECONNECTING means that an already established Connection is being
+    // restored without an explicit Connect request.
+    RECONNECTING = 4;
+
+    DISCONNECTING = 5;
+  }
+
+  message DNS {
+    // Mode is the effective DNS mode.
+    ConnectionOptions.DNS.Mode mode = 1;
+
+    // IsConfigured shows whether the Octelium DNS configuration is currently
+    // installed on the host.
+    bool isConfigured = 2;
+
+    // Servers is the list of the Cluster DNS servers used by the Connection.
+    repeated string servers = 3;
+
+    // LocalServerListenAddress is the listen address of the Octelium local DNS
+    // server whenever it is running.
+    string localServerListenAddress = 4;
+  }
+
+  State state = 1;
+
+  // TunnelMode is the effective tunneling mode of the Connection.
+  ConnectionOptions.TunnelMode tunnelMode = 2;
+
+  // ImplementationMode is the effective local implementation mode of the
+  // Connection.
+  ConnectionOptions.ImplementationMode implementationMode = 3;
+
+  // Addresses is the list of the dual-stack addresses assigned to the
+  // Connection by the Cluster.
+  repeated octelium.api.main.meta.v1.DualStackNetwork addresses = 4;
+
+  DNS dns = 5;
+
+  // ConnectedAt is the time at which the current Connection was initially
+  // established. It is set while the state is CONNECTED or RECONNECTING.
+  google.protobuf.Timestamp connectedAt = 6;
+
+  // Options is the requested ConnectionOptions of the Connection after the
+  // daemon-side normalization is applied. The fields that are left unspecified
+  // are decided by the daemon depending on the host and on the Cluster. The
+  // separate fields of this message describe the configuration that is
+  // actually in effect.
+  ConnectionOptions options = 7;
+
+  // DeviceName is the name of the local network device of the Connection.
+  string deviceName = 8;
+
+  // MTU is the effective link MTU of the Connection.
+  int32 mtu = 9;
+}
+
+// Operation is an asynchronous local Operation.
+message Operation {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+
+    AUTHENTICATE = 1;
+    CONNECT = 2;
+    DISCONNECT = 3;
+    LOGOUT = 4;
+    DELETE = 5;
+  }
+
+  enum State {
+    STATE_UNSPECIFIED = 0;
+
+    // PENDING means that the Operation is accepted but it has not started
+    // yet.
+    PENDING = 1;
+
+    RUNNING = 2;
+
+    // WAITING_FOR_USER means that the progress of the Operation requires an
+    // interaction of the user. Action describes what the frontend is supposed
+    // to do.
+    WAITING_FOR_USER = 3;
+
+    SUCCEEDED = 4;
+
+    FAILED = 5;
+
+    CANCELED = 6;
+  }
+
+  // ID is an opaque identifier that is unique within the daemon instance.
+  string id = 1;
+
+  string domain = 2;
+
+  Type type = 3;
+
+  State state = 4;
+
+  google.protobuf.Timestamp createdAt = 5;
+
+  google.protobuf.Timestamp updatedAt = 6;
+
+  google.protobuf.Timestamp completedAt = 7;
+
+  // Action is set while the state is WAITING_FOR_USER.
+  Action action = 8;
+
+  // Error is set whenever the state is FAILED.
+  Error error = 9;
+
+  // Cancellable shows whether CancelOperation can still cancel this Operation.
+  bool cancellable = 10;
+}
+
+// Action is an interaction that has to be carried out by the unprivileged
+// frontend on behalf of an Operation.
+//
+// Action is intentionally typed and narrow. It must never become a generic
+// command execution or privileged host operation mechanism.
+message Action {
+  message OpenURL {
+    // URL is an HTTPS URL that is supposed to be opened using the interactive
+    // user's system browser. Frontends are supposed to independently validate
+    // the scheme of the URL before opening it.
+    string url = 1;
+  }
+
+  oneof type {
+    OpenURL openURL = 1;
+  }
+
+  // ExpiresAt is the time after which the Action can no longer be carried out.
+  // The Operation fails once it is reached.
+  google.protobuf.Timestamp expiresAt = 2;
+}
+
+// Error is a structured failure of an asynchronous Operation.
+//
+// Synchronous request validation and authorization failures use the standard
+// gRPC status codes (e.g. INVALID_ARGUMENT, FAILED_PRECONDITION,
+// UNAUTHENTICATED, PERMISSION_DENIED) instead.
+message Error {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+
+    // AUTHENTICATION_REQUIRED means that the domain has no usable credentials
+    // and that a new authentication is required.
+    AUTHENTICATION_REQUIRED = 1;
+
+    // AUTHENTICATION_FAILED means that the Cluster rejected the
+    // authentication.
+    AUTHENTICATION_FAILED = 2;
+
+    // AUTHENTICATION_TIMED_OUT means that the user did not complete the
+    // browser authentication in time.
+    AUTHENTICATION_TIMED_OUT = 3;
+
+    // CLUSTER_UNREACHABLE means that the Cluster could not be reached.
+    CLUSTER_UNREACHABLE = 4;
+
+    // CONNECTION_FAILED means that the Connection to the Cluster could not be
+    // established or that it was abruptly closed.
+    CONNECTION_FAILED = 5;
+
+    // NETWORK_CONFIGURATION_FAILED means that the local network device, the
+    // addresses or the routes could not be configured.
+    NETWORK_CONFIGURATION_FAILED = 6;
+
+    // DNS_CONFIGURATION_FAILED means that the host DNS could not be
+    // configured.
+    DNS_CONFIGURATION_FAILED = 7;
+
+    // LOCAL_PORT_CONFLICT means that a local listen port (e.g. of a published
+    // Service, of the embedded SSH/SOCKS5 servers or of the local DNS server)
+    // is already in use.
+    LOCAL_PORT_CONFLICT = 8;
+
+    // PERMISSION_DENIED means that the Operation is not permitted for the
+    // calling OS principal.
+    PERMISSION_DENIED = 9;
+
+    // OPERATION_CANCELED means that the Operation was canceled.
+    OPERATION_CANCELED = 10;
+
+    // INTERNAL is an unclassified daemon-side failure.
+    INTERNAL = 11;
+  }
+
+  Code code = 1;
+
+  // Message is a human-readable diagnostic information. Frontends must never
+  // parse it nor depend on its wording.
+  string message = 2;
+
+  // Retryable shows whether retrying the failed Operation without changing its
+  // input can reasonably succeed.
+  bool retryable = 3;
+}
+
+message AuthenticateRequest {
+  // Browser authenticates via the web Portal using the system browser of the
+  // interactive user.
+  message Browser {}
+
+  // AuthenticationToken authenticates using an Octelium authentication Token.
+  message AuthenticationToken {
+    // AuthenticationToken is the authentication Token. The daemon treats it as
+    // a secret and it never logs it.
+    string authenticationToken = 1;
+  }
+
+  // Assertion authenticates using an OpenID Connect/JWT assertion.
+  //
+  // The assertion itself is resolved by the caller out of its own workload
+  // environment (e.g. the Kubernetes service account token file, the GitHub
+  // Actions OIDC endpoint, the Azure metadata endpoint). The daemon
+  // intentionally does not resolve assertions on its own since it runs as
+  // root/SYSTEM and since it does not share the environment of the caller.
+  message Assertion {
+    // Assertion is the assertion itself. The daemon treats it as a secret and
+    // it never logs it.
+    string assertion = 1;
+
+    // IdentityProviderRef is the IdentityProvider to authenticate against.
+    octelium.api.main.meta.v1.ObjectReference identityProviderRef = 2;
+  }
+
+  // Domain is the Cluster domain.
+  string domain = 1;
+
+  // Scopes optionally limits the scopes of the Session that is created by the
+  // authentication.
+  repeated string scopes = 2;
+
+  // Type is the authentication method. Exactly one type must be set. Otherwise
+  // the RPC returns INVALID_ARGUMENT.
+  oneof type {
+    Browser browser = 3;
+    AuthenticationToken authenticationToken = 4;
+    Assertion assertion = 5;
+  }
+}
+
+message ConnectRequest {
+  string domain = 1;
+
+  // Options overrides the persisted DomainSettings for this Connection only.
+  // If it is unset, the persisted ConnectionOptions of the domain are used.
+  // Setting it replaces the persisted ConnectionOptions as a whole as opposed
+  // to overlaying the set fields on top of them. In other words, whatever is
+  // left unset here is the default of the daemon and not the persisted value.
+  // Setting it does not modify the persisted settings.
+  ConnectionOptions options = 2;
+}
+
+message DisconnectRequest {
+  string domain = 1;
+}
+
+message LogoutRequest {
+  string domain = 1;
+}
+
+message DeleteDomainRequest {
+  string domain = 1;
+}
+
+message GetOperationRequest {
+  string id = 1;
+}
+
+message CancelOperationRequest {
+  string id = 1;
+}
+
+message GetAPICredentialRequest {
+  string domain = 1;
+}
+
+message GetAPICredentialResponse {
+  // AccessToken is the current Cluster API access token of the domain. The
+  // caller is supposed to keep it in memory only.
+  string accessToken = 1;
+
+  // ExpiresAt is unset whenever the access token has no known expiration time.
+  google.protobuf.Timestamp expiresAt = 2;
+}
+
+// DomainSettings is the locally persisted preferences of a Cluster domain.
+// These settings are owned by the daemon as opposed to the preferences of the
+// desktop application itself (e.g. theme, window state, recent domains).
+message DomainSettings {
+  string domain = 1;
+
+  // AutoConnect makes the daemon automatically establish the Connection of the
+  // domain whenever usable credentials are available. AutoConnect never
+  // triggers a browser authentication on its own.
+  bool autoConnect = 2;
+
+  // ConnectionOptions is the options used by Connect whenever
+  // ConnectRequest.options is unset.
+  ConnectionOptions connectionOptions = 3;
+}
+
+message UpdateDomainSettingsRequest {
+  // Domain is the Cluster domain whose settings are replaced.
+  string domain = 1;
+
+  // Settings is the entire desired settings. The settings of the domain are
+  // replaced by it. Its domain field is ignored.
+  DomainSettings settings = 2;
+}
+
+// ConnectionOptions is the local and user-selectable policy of a Connection.
+//
+// These fields intentionally represent semantic options as opposed to the
+// `user.v1.Connect` wire protocol of the Cluster or to the syntax of the CLI
+// flags. The daemon translates them into the corresponding Cluster API
+// requests and host configuration.
+message ConnectionOptions {
+  enum L3Mode {
+    // L3_MODE_UNSPECIFIED lets the daemon choose the mode depending on the
+    // host networking.
+    L3_MODE_UNSPECIFIED = 0;
+
+    V4 = 1;
+    V6 = 2;
+    BOTH = 3;
+  }
+
+  enum TunnelMode {
+    // TUNNEL_MODE_UNSPECIFIED lets the daemon choose its default tunneling
+    // mode.
+    TUNNEL_MODE_UNSPECIFIED = 0;
+
+    WIREGUARD = 1;
+
+    // QUICV0 is the current experimental QUIC-based tunneling mode.
+    QUICV0 = 2;
+  }
+
+  enum ImplementationMode {
+    // IMPLEMENTATION_MODE_UNSPECIFIED lets the daemon choose the best
+    // available implementation.
+    IMPLEMENTATION_MODE_UNSPECIFIED = 0;
+
+    // KERNEL uses the kernel implementation wherever it is supported.
+    KERNEL = 1;
+
+    // TUN uses the userspace implementation over a TUN device.
+    TUN = 2;
+
+    // GVISOR uses the pure userspace gVisor-based implementation.
+    GVISOR = 3;
+  }
+
+  message DNS {
+    enum Mode {
+      // MODE_UNSPECIFIED is normalized to DEFAULT.
+      MODE_UNSPECIFIED = 0;
+
+      // DEFAULT uses the normal Octelium private/split DNS.
+      DEFAULT = 1;
+
+      // DISABLED does not modify the host DNS configuration at all.
+      DISABLED = 2;
+
+      // FULL routes all the host DNS queries to the Cluster DNS instead of
+      // only the ones belonging to the Cluster domain. It implicitly enables
+      // the local DNS server.
+      FULL = 3;
+    }
+
+    Mode mode = 1;
+
+    // EnableLocalServer explicitly enables the Octelium local DNS server. The
+    // daemon also implicitly enables it whenever it is required by the mode.
+    bool enableLocalServer = 2;
+
+    // LocalServerListenAddress optionally overrides the default listen address
+    // of the local DNS server. The daemon validates the address and it does
+    // not let an unprivileged caller turn it into an arbitrary privileged
+    // listener.
+    string localServerListenAddress = 3;
+  }
+
+  message ServiceReference {
+    string name = 1;
+
+    // Namespace is the Namespace of the Service. An empty Namespace means the
+    // `default` Namespace.
+    string namespace = 2;
+  }
+
+  message PublishedService {
+    ServiceReference service = 1;
+
+    // Address is the local host address at which the Service is published. An
+    // empty address means the normal loopback binding.
+    string address = 2;
+
+    // Port is the local listen port of the published Service.
+    uint32 port = 3;
+  }
+
+  message ServiceOptions {
+    // ServeAll hosts all the Services that the User is authorized to host.
+    // ServeAll and Serve are mutually exclusive.
+    bool serveAll = 1;
+
+    // Serve is the list of the individual Services to host.
+    repeated ServiceReference serve = 2;
+
+    // Publish maps Cluster Services to listeners on the local host.
+    repeated PublishedService publish = 3;
+
+    // EnableEmbeddedSSH enables the embedded SSH server.
+    //
+    // This API intentionally does not expose the `--essh-user` flag of the
+    // CLI. The incoming SSH sessions always run as the OS principal that owns
+    // the daemon. Otherwise a caller would be able to use the privileged
+    // daemon in order to choose an arbitrary host identity.
+    bool enableEmbeddedSSH = 4;
+
+    // EnableEmbeddedSOCKS5 enables the embedded SOCKS5 server.
+    bool enableEmbeddedSOCKS5 = 5;
+  }
+
+  L3Mode l3Mode = 1;
+
+  TunnelMode tunnelMode = 2;
+
+  ImplementationMode implementationMode = 3;
+
+  DNS dns = 4;
+
+  ServiceOptions serviceOptions = 5;
+
+  // MTU optionally overrides the link MTU of the Connection. Valid values are
+  // between 576 and 1500. The daemon rejects the out-of-range values with
+  // INVALID_ARGUMENT.
+  int32 mtu = 6;
+}
