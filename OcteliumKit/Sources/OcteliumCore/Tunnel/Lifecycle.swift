@@ -104,8 +104,14 @@ public func mergeStatus(_ app: Daemonv1.GetStatusResponse?, _ tunnel: TunnelSnap
     return ret
 }
 
-public func getOnDemandDomain(_ status: Daemonv1.GetStatusResponse?, _ primaryDomain: String?) -> String? {
-    let domains = (status?.domains ?? []).filter { isAuthenticated($0) && $0.settings.autoConnect }
+public func getOnDemandDomain(
+    _ status: Daemonv1.GetStatusResponse?,
+    _ primaryDomain: String?,
+    excluding: String? = nil
+) -> String? {
+    let domains = (status?.domains ?? []).filter {
+        $0.domain != excluding && isAuthenticated($0) && $0.settings.autoConnect
+    }
 
     if let ret = domains.first(where: { $0.domain == primaryDomain }) {
         return ret.domain

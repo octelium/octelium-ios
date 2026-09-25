@@ -24,6 +24,14 @@ final class TunnelIPCTests: XCTestCase {
         XCTAssertEqual(.getLogs, decodeTunnelMessage(Data([0, 2]).suffix(1)))
     }
 
+    func testGetTunnelStatusNotification() {
+        XCTAssertEqual("group.com.octelium.client.tunnel.status", getTunnelStatusNotification("group.com.octelium.client"))
+        XCTAssertNotEqual(
+            getTunnelStatusNotification("group.com.octelium.client"),
+            getTunnelStatusNotification("group.com.example.octelium")
+        )
+    }
+
     func testLogs() throws {
         do {
             XCTAssertEqual([], try decodeLogs(try encodeLogs([])))

@@ -10,6 +10,14 @@ public protocol RequestCompleter: Sendable {
     func complete(_ requestID: UInt64, _ response: Data) -> Int32
 }
 
+public struct UnsupportedTunnelHost: TunnelHost {
+    public init() {}
+
+    public func apply(domain: String, generation: UInt64, spec: TunnelSpec) async throws -> Int32? {
+        throw StatusError(.failedPrecondition, "Only the packet tunnel provider can apply tunnel configurations")
+    }
+}
+
 public final class PlatformRequestHandler: Sendable {
     private struct ApplyState {
         var latestGeneration: UInt64 = 0
@@ -18,11 +26,13 @@ public final class PlatformRequestHandler: Sendable {
 
     private let host: any TunnelHost
     private let completer: any RequestCompleter
+    private let domain: String?
     private let state = Mutex(ApplyState())
 
-    public init(host: any TunnelHost, completer: any RequestCompleter) {
+    public init(host: any TunnelHost, completer: any RequestCompleter, domain: String? = nil) {
         self.host = host
         self.completer = completer
+        self.domain = domain
     }
 
     var latestGeneration: UInt64 {
@@ -54,6 +64,11 @@ public final class PlatformRequestHandler: Sendable {
 
         if req.domain.isEmpty {
             completeError(requestID, "The domain is not set")
+            return
+        }
+
+        if let domain, req.domain != domain {
+            completeError(requestID, "The domain \(req.domain) is not handled by the tunnel of \(domain)")
             return
         }
 

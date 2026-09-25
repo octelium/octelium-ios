@@ -17,7 +17,9 @@ func getNetworkTransport(_ arg: NWInterface.InterfaceType) -> NetworkTransport {
 
 func getNetworkInfo(_ path: NWPath) -> NetworkInfo {
     let physical: [NWInterface.InterfaceType] = [.wifi, .cellular, .wiredEthernet]
-    let iface = path.availableInterfaces.first { physical.contains($0.type) } ?? path.availableInterfaces.first
+    let iface = path.availableInterfaces.first { physical.contains($0.type) && path.usesInterfaceType($0.type) }
+        ?? path.availableInterfaces.first { physical.contains($0.type) }
+        ?? path.availableInterfaces.first
 
     let gateways: [String] = path.gateways.compactMap {
         guard case .hostPort(let host, _) = $0 else {
@@ -41,12 +43,18 @@ func getNetworkInfo(_ path: NWPath) -> NetworkInfo {
 final class PathMonitor {
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "com.octelium.client.path", qos: .utility)
+    private var continuation: AsyncStream<NetworkInfo>.Continuation?
 
-    func start(_ handler: @escaping (NetworkInfo) -> Void) {
+    func start() -> AsyncStream<NetworkInfo> {
+        let (ret, continuation) = AsyncStream.makeStream(of: NetworkInfo.self, bufferingPolicy: .bufferingNewest(1))
+        self.continuation = continuation
+
         monitor.pathUpdateHandler = { path in
-            handler(getNetworkInfo(path))
+            continuation.yield(getNetworkInfo(path))
         }
         monitor.start(queue: queue)
+
+        return ret
     }
 
     var current: NetworkInfo {
@@ -56,5 +64,7 @@ final class PathMonitor {
     func cancel() {
         monitor.pathUpdateHandler = nil
         monitor.cancel()
+        continuation?.finish()
+        continuation = nil
     }
 }

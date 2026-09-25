@@ -8,6 +8,8 @@ enum AppGroup {
 
     static let deviceNameKey = "deviceName"
 
+    static let tunnelStatusNotification = getTunnelStatusNotification(identifier)
+
     static var defaults: UserDefaults {
         UserDefaults(suiteName: identifier) ?? .standard
     }
@@ -17,13 +19,17 @@ enum AppGroup {
             throw StatusError(.failedPrecondition, "The App Group \(identifier) is not available")
         }
 
-        let ret = base.appendingPathComponent("octelium", isDirectory: true)
+        var ret = base.appendingPathComponent("octelium", isDirectory: true)
 
         try FileManager.default.createDirectory(
             at: ret,
             withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
         )
+
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? ret.setResourceValues(values)
 
         return ret
     }

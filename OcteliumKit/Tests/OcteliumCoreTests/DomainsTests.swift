@@ -268,6 +268,24 @@ final class DomainsTests: XCTestCase {
         XCTAssertNil(validateDomain("xn--bcher-kva.example"))
     }
 
+    func testIsValidHostname() {
+        XCTAssertTrue(isValidHostname("example.com"))
+        XCTAssertTrue(isValidHostname("svc-1.apps.example.com"))
+        XCTAssertTrue(isValidHostname("xn--bcher-kva.example"))
+        XCTAssertTrue(isValidHostname(String(repeating: "a", count: 63) + ".com"))
+        XCTAssertFalse(isValidHostname(""))
+        XCTAssertFalse(isValidHostname("example"))
+        XCTAssertFalse(isValidHostname("Example.com"))
+        XCTAssertFalse(isValidHostname(" example.com"))
+        XCTAssertFalse(isValidHostname("example.com."))
+        XCTAssertFalse(isValidHostname("user@example.com"))
+        XCTAssertFalse(isValidHostname("example.com:443"))
+        XCTAssertFalse(isValidHostname("example.com/x"))
+        XCTAssertFalse(isValidHostname("bücher.example"))
+        XCTAssertFalse(isValidHostname(String(repeating: "a", count: 64) + ".com"))
+        XCTAssertFalse(isValidHostname(String(repeating: "a.", count: 127) + "com"))
+    }
+
     func testNormalizeDomain() {
         XCTAssertEqual("example.com", normalizeDomain("example.com"))
         XCTAssertEqual("example.com", normalizeDomain(" Example.COM "))

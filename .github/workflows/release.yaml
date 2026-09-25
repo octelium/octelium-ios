@@ -153,9 +153,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          plist() {
+            /usr/libexec/PlistBuddy -c "Print :$2" "$1"
+          }
+
           app="build/Octelium.xcarchive/Products/Applications/Octelium.app"
+          appex="$app/PlugIns/OcteliumTunnel.appex"
           codesign --verify --deep --strict --verbose=2 "$app"
-          codesign -d --entitlements - "$app/PlugIns/OcteliumTunnel.appex" | grep -q packet-tunnel-provider
+          codesign -d --entitlements - --xml "$app" > build/app.entitlements
+          codesign -d --entitlements - --xml "$appex" > build/tunnel.entitlements
+
+          for file in build/app.entitlements build/tunnel.entitlements; do
+            [[ "$(plist "$file" com.apple.developer.networking.networkextension:0)" == "packet-tunnel-provider" ]]
+          done
+
+          app_group="$(plist build/app.entitlements com.apple.security.application-groups:0)"
+          [[ -n "$app_group" ]]
+          [[ "$app_group" == "$(plist build/tunnel.entitlements com.apple.security.application-groups:0)" ]]
+          [[ "$app_group" == "$(plist "$app/Info.plist" OcteliumAppGroup)" ]]
+          [[ "$(plist "$app/Info.plist" OcteliumTunnelBundleID)" == "$(plist "$appex/Info.plist" CFBundleIdentifier)" ]]
           ls build/export/*.ipa
       - name: Collect artifacts
         env:

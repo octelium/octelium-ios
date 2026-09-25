@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 #if canImport(Darwin)
 import Darwin
@@ -6,10 +7,46 @@ import Darwin
 import Glibc
 #endif
 
-public func resolveHost(_ host: String) async -> HostCheck {
+public let hostResolveTimeout: Duration = .seconds(10)
+
+private final class ResolveOnce: Sendable {
+    private let cont: Mutex<CheckedContinuation<HostCheck, Never>?>
+
+    init(_ cont: CheckedContinuation<HostCheck, Never>) {
+        self.cont = Mutex(cont)
+    }
+
+    func resume(_ arg: HostCheck) {
+        let ret = cont.withLock { cont in
+            let ret = cont
+            cont = nil
+            return ret
+        }
+
+        ret?.resume(returning: arg)
+    }
+}
+
+public func resolveHost(_ host: String, timeout: Duration = hostResolveTimeout) async -> HostCheck {
+    await resolveHost(host, timeout: timeout, doResolveHost)
+}
+
+func resolveHost(
+    _ host: String,
+    timeout: Duration,
+    _ fn: @escaping @Sendable (String) -> HostCheck
+) async -> HostCheck {
     await withCheckedContinuation { cont in
+        let once = ResolveOnce(cont)
+
+        let timer = Task {
+            try await Task.sleep(for: timeout)
+            once.resume(HostCheck(host: host, resolution: .failed, message: "Timed out"))
+        }
+
         DispatchQueue.global(qos: .userInitiated).async {
-            cont.resume(returning: doResolveHost(host))
+            once.resume(fn(host))
+            timer.cancel()
         }
     }
 }

@@ -40,9 +40,7 @@ private final class Callbacks: NativeCallbacks {
     }
 
     func awaitStatus(_ fn: (Daemonv1.GetStatusResponse) -> Bool) async throws -> Daemonv1.GetStatusResponse {
-        let deadline = Date().addingTimeInterval(10)
-
-        while Date() < deadline {
+        try await wait("the status") {
             let ret = events.withLock { itms in
                 itms.reversed().compactMap { ev -> Daemonv1.GetStatusResponse? in
                     guard case .status(let ret) = ev.type else {
@@ -52,14 +50,32 @@ private final class Callbacks: NativeCallbacks {
                 }.first
             }
 
-            if let ret, fn(ret) {
+            guard let ret, fn(ret) else {
+                return nil
+            }
+
+            return ret
+        }
+    }
+
+    func awaitLog(_ fn: (Mobilev1.Log) -> Bool) async throws -> Mobilev1.Log {
+        try await wait("the log") {
+            logs.first(where: fn)
+        }
+    }
+
+    private func wait<T>(_ name: String, _ fn: () -> T?) async throws -> T {
+        let deadline = Date().addingTimeInterval(10)
+
+        while Date() < deadline {
+            if let ret = fn() {
                 return ret
             }
 
             try await Task.sleep(for: .milliseconds(50))
         }
 
-        throw StatusError(.deadlineExceeded, "Timed out waiting for the status")
+        throw StatusError(.deadlineExceeded, "Timed out waiting for \(name)")
     }
 }
 
@@ -243,15 +259,23 @@ final class LibOcteliumTests: XCTestCase {
         }
 
         do {
-            let op = try await c.authenticateToken("example.com", "invalid")
+            let op = try await c.authenticateToken("example.localhost", "invalid")
             XCTAssertEqual(.authenticate, op.type)
 
+            let ret = try await c.cancelOperation(op.id)
+            XCTAssertTrue([.canceled, .failed].contains(ret.state))
+            XCTAssertFalse(ret.cancellable)
+
             let status = try await callbacks.awaitStatus {
-                getDomainState($0, "example.com")?.lastOperation.state == .failed
+                let state = getDomainState($0, "example.localhost")
+                return state?.lastOperation.id == op.id && state?.lastOperation.state == ret.state &&
+                    state?.authentication.state == .loggedOut
             }
-            XCTAssertEqual(.loggedOut, getDomainState(status, "example.com")?.authentication.state)
-            XCTAssertTrue(getDomainState(status, "example.com")!.hasLastError)
-            XCTAssertTrue(callbacks.logs.contains { $0.level == .debug && $0.hasCreatedAt })
+            XCTAssertNil(getActiveOperation(getDomainState(status, "example.localhost")))
+
+            let log = try await callbacks.awaitLog { $0.message.hasPrefix("Could not authenticate") }
+            XCTAssertEqual(.debug, log.level)
+            XCTAssertTrue(log.hasCreatedAt)
         }
 
         lib.close()

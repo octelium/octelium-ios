@@ -93,18 +93,16 @@ final class PathMonitorTests: XCTestCase {
         XCTAssertEqual(.other, getNetworkTransport(.other))
     }
 
-    func testPathMonitor() {
-        let exp = expectation(description: "path")
-        exp.assertForOverFulfill = false
-
+    func testPathMonitor() async {
         let monitor = PathMonitor()
+        var updates = monitor.start().makeAsyncIterator()
 
-        monitor.start { info in
-            XCTAssertEqual(getNetworkState(info).isAvailable, info.isSatisfied && (info.supportsIPv4 || info.supportsIPv6))
-            exp.fulfill()
+        guard let info = await updates.next() else {
+            return XCTFail()
         }
+        XCTAssertEqual(getNetworkState(info).isAvailable, info.isSatisfied && (info.supportsIPv4 || info.supportsIPv6))
 
-        wait(for: [exp], timeout: 10)
         monitor.cancel()
+        while await updates.next() != nil {}
     }
 }

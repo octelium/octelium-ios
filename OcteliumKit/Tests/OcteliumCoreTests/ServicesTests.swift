@@ -27,15 +27,47 @@ final class ServicesTests: XCTestCase {
             let svc = getTestService(hostname: "svc")
             XCTAssertEqual("svc.local.example.com", getServicePrivateFQDN(svc, "example.com"))
             XCTAssertEqual("svc.example.com", getServicePublicFQDN(svc, "example.com"))
-            XCTAssertEqual("https://svc.example.com", getServicePublicURL(svc, "example.com"))
+            XCTAssertEqual("https://svc.example.com", getServicePublicURL(svc, "example.com")?.absoluteString)
             XCTAssertEqual("svc", getServiceHostname(svc))
         }
         do {
             let svc = getTestService(hostname: "")
             XCTAssertEqual("local.example.com", getServicePrivateFQDN(svc, "example.com"))
             XCTAssertEqual("example.com", getServicePublicFQDN(svc, "example.com"))
-            XCTAssertEqual("https://example.com", getServicePublicURL(svc, "example.com"))
+            XCTAssertEqual("https://example.com", getServicePublicURL(svc, "example.com")?.absoluteString)
             XCTAssertEqual("svc.default", getServiceHostname(svc))
+        }
+    }
+
+    func testGetServicePublicURL() {
+        do {
+            let svc = getTestService(hostname: "svc-1.apps")
+            XCTAssertEqual("https://svc-1.apps.example.com", getServicePublicURL(svc, "example.com")?.absoluteString)
+            XCTAssertEqual("svc-1.apps.example.com", getServicePublicURL(svc, "example.com")?.host)
+        }
+
+        for hostname in [
+            "evil.com/#",
+            "evil.com?",
+            "user@evil.com",
+            "evil.com:8443",
+            "svc/../x",
+            "svc\\x",
+            "svc x",
+            "SVC",
+            "svc..x",
+            "-svc",
+            "svc\n",
+            "bücher",
+            String(repeating: "a", count: 64),
+        ] {
+            XCTAssertNil(getServicePublicURL(getTestService(hostname: hostname), "example.com"), hostname)
+        }
+
+        do {
+            XCTAssertNil(getServicePublicURL(getTestService(hostname: "svc"), ""))
+            XCTAssertNil(getServicePublicURL(getTestService(hostname: ""), "localhost"))
+            XCTAssertNil(getServicePublicURL(getTestService(hostname: "svc"), String(repeating: "a.", count: 127) + "com"))
         }
     }
 

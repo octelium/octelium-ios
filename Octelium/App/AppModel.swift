@@ -87,6 +87,11 @@ final class AppModel {
     @ObservationIgnored private var tunnelObserver: DarwinObserver?
     @ObservationIgnored private var sessionKeys: [String: String] = [:]
     @ObservationIgnored private var isStarted = false
+    @ObservationIgnored private var runtimeTask: Task<Void, Never>?
+    @ObservationIgnored private var networkTask: Task<Void, Never>?
+    @ObservationIgnored private var networkReporter: NetworkStateReporter?
+    @ObservationIgnored private var tunnelRefreshID = 0
+    @ObservationIgnored private var lastAuthCallbackURL: String?
 
     init() {
         let holder = ClientHolder()
@@ -103,11 +108,12 @@ final class AppModel {
 
         isStarted = true
 
-        AppGroup.defaults.set(UIDevice.current.name, forKey: AppGroup.deviceNameKey)
+        AppGroup.defaults.set(getAppDeviceName(), forKey: AppGroup.deviceNameKey)
 
-        pathMonitor.start { [weak self] info in
-            Task { @MainActor in
-                self?.networkInfo = info
+        let updates = pathMonitor.start()
+        networkTask = Task { [weak self] in
+            for await info in updates {
+                await self?.setNetwork(info)
             }
         }
 
@@ -117,15 +123,15 @@ final class AppModel {
             }
         }
 
-        tunnelObserver = DarwinObserver(name: tunnelStatusNotification) { [weak self] in
+        tunnelObserver = DarwinObserver(name: AppGroup.tunnelStatusNotification) { [weak self] in
             Task { @MainActor in
                 await self?.refreshTunnel()
             }
         }
 
-        Task {
-            await vpn.load()
-            await startRuntime()
+        runRuntimeTransition {
+            await self.vpn.load()
+            await self.startRuntime()
         }
     }
 
@@ -142,32 +148,59 @@ final class AppModel {
     }
 
     func retryStart() {
-        Task {
-            await startRuntime()
+        runRuntimeTransition {
+            await self.startRuntime()
         }
     }
 
     func resetState() {
-        Task {
-            runtimeState = .loading
+        runRuntimeTransition {
+            await self.doResetState()
+        }
+    }
 
-            if let domain = vpn.domain {
-                try? await releaseTunnel(domain)
+    private func runRuntimeTransition(_ fn: @escaping @MainActor () async -> Void) {
+        let prev = runtimeTask
+        runtimeTask = Task {
+            await prev?.value
+            await fn()
+        }
+    }
+
+    private func doResetState() async {
+        runtimeState = .loading
+
+        if let domain = vpn.domain {
+            do {
+                try await releaseTunnel(domain)
+            } catch {
+                Log.app.error("Could not stop the VPN to reset the local state: \(getErrorMessage(error), privacy: .public)")
+                runtimeState = .failed(
+                    message: "Could not stop the VPN before resetting the local state. \(getErrorMessage(error))",
+                    isResettable: true
+                )
+                return
             }
-
-            await stopRuntime()
-            cluster.close()
-            selectDomain(nil)
 
             do {
-                let stateDir = try AppGroup.getStateDir()
-                try StateKeyStore(store: AppGroup.getSecretStore(), stateDir: stateDir).reset()
+                try await vpn.remove()
             } catch {
-                Log.app.error("Could not reset the local state: \(getErrorMessage(error), privacy: .public)")
+                Log.app.warning("Could not remove the VPN configuration: \(getErrorMessage(error), privacy: .public)")
             }
-
-            await startRuntime()
         }
+
+        await stopRuntime()
+        cluster.close()
+        selectDomain(nil)
+
+        do {
+            let stateDir = try AppGroup.getStateDir()
+            try StateKeyStore(store: AppGroup.getSecretStore(), stateDir: stateDir).reset()
+        } catch {
+            Log.app.error("Could not reset the local state: \(getErrorMessage(error), privacy: .public)")
+        }
+
+        await startRuntime()
     }
 
     private func startRuntime() async {
@@ -195,60 +228,112 @@ final class AppModel {
         self.statusStore = statusStore
         self.logStore = logStore
 
-        let deviceName = UIDevice.current.name
+        let deviceName = getAppDeviceName()
 
+        let lib: LibOctelium
         do {
-            let lib = try await Task.detached(priority: .userInitiated) {
+            lib = try await Task.detached(priority: .userInitiated) {
                 try createLib(deviceName: deviceName, callbacks: callbacks)
             }.value
+        } catch {
+            failRuntime(error)
+            return
+        }
 
-            self.lib = lib
+        callbacks.setRequestHandler(PlatformRequestHandler(host: UnsupportedTunnelHost(), completer: lib))
 
-            let client = LocalClient(lib)
+        let client = LocalClient(lib)
+
+        do {
             let info = try await client.getInfo()
-
             if let msg = checkInfo(info) {
+                await closeLib(lib)
+                clearRuntime()
                 runtimeState = .failed(message: msg, isResettable: false)
                 return
             }
 
+            let status = try await client.getStatus()
+
+            self.lib = lib
             self.info = info
             holder.set(client)
-
-            statusStore.update(try await client.getStatus())
+            networkReporter = getNetworkReporter(client)
+            statusStore.update(status)
             onAppStatusChange()
+        } catch {
+            await closeLib(lib)
+            failRuntime(error)
+            return
+        }
 
-            runtimeState = .ready
+        runtimeState = .ready
 
-            await refreshTunnel()
-        } catch let err as StateKeyUnavailableError {
+        if let networkInfo {
+            await networkReporter?.update(getNetworkState(networkInfo))
+        }
+
+        await refreshTunnel()
+    }
+
+    private func failRuntime(_ err: Error) {
+        clearRuntime()
+
+        switch err {
+        case let err as StateKeyUnavailableError:
             Log.app.error("Could not get the state key: \(err.message, privacy: .public)")
             runtimeState = .failed(
                 message: "The local Octelium state cannot be decrypted on this device. \(err.message)",
                 isResettable: !err.isLocked
             )
-        } catch let err as StateOpenError {
+        case let err as StateOpenError:
             runtimeState = .failed(message: err.message, isResettable: true)
-        } catch {
-            Log.app.error("Could not start liboctelium: \(getErrorMessage(error), privacy: .public)")
-            runtimeState = .failed(message: getErrorMessage(error), isResettable: false)
+        default:
+            Log.app.error("Could not start liboctelium: \(getErrorMessage(err), privacy: .public)")
+            runtimeState = .failed(message: getErrorMessage(err), isResettable: false)
         }
     }
 
     private func stopRuntime() async {
         holder.set(nil)
+        networkReporter = nil
 
         if let lib {
             self.lib = nil
             await closeLib(lib)
         }
 
+        clearRuntime()
+    }
+
+    private func clearRuntime() {
         statusStore = nil
         logStore = nil
         appStatus = nil
         info = nil
         logs = []
         sessionKeys = [:]
+    }
+
+    private func getNetworkReporter(_ client: LocalClient) -> NetworkStateReporter {
+        NetworkStateReporter { state in
+            do {
+                _ = try await client.setNetworkState(state)
+                return true
+            } catch {
+                Log.app.warning("Could not set the network state: \(getErrorMessage(error), privacy: .public)")
+                return false
+            }
+        }
+    }
+
+    private func setNetwork(_ info: NetworkInfo) async {
+        networkInfo = info
+        await networkReporter?.update(getNetworkState(info))
+    }
+
+    private func getAppDeviceName() -> String {
+        getDeviceName(name: UIDevice.current.name, model: UIDevice.current.model, machine: getDeviceModel())
     }
 
     private func getClient() throws -> LocalClient {
@@ -294,6 +379,9 @@ final class AppModel {
     }
 
     func refreshTunnel() async {
+        tunnelRefreshID += 1
+        let id = tunnelRefreshID
+
         let state = vpn.state
         let domain = vpn.domain
         let previous = tunnel
@@ -315,6 +403,10 @@ final class AppModel {
             if isVPNActive(previous.state), let err = await vpn.fetchLastDisconnectError() {
                 next.error = getDaemonError(err)
             }
+        }
+
+        guard id == tunnelRefreshID else {
+            return
         }
 
         tunnel = next
@@ -438,14 +530,15 @@ final class AppModel {
     func handleAuthCallback(_ url: URL) {
         let arg = url.absoluteString
 
+        guard isCallbackURL(arg), !isCompletingAuthentication, arg != lastAuthCallbackURL else {
+            return
+        }
+
+        lastAuthCallbackURL = arg
+        authCallbackError = nil
+        isCompletingAuthentication = true
+
         Task {
-            authCallbackError = nil
-
-            guard isCallbackURL(arg) else {
-                return
-            }
-
-            isCompletingAuthentication = true
             defer {
                 isCompletingAuthentication = false
             }
@@ -515,15 +608,21 @@ final class AppModel {
     }
 
     func logout(_ domain: String) async throws {
+        let isOnDemand = isOnDemandTarget(domain)
         try await releaseTunnel(domain)
 
         let client = try getClient()
         _ = try await client.logout(domain)
         cluster.invalidate(domain)
         await refreshAppStatus()
+
+        if isOnDemand {
+            await restoreOnDemand(excluding: domain)
+        }
     }
 
     func deleteDomain(_ domain: String) async throws {
+        let isOnDemand = isOnDemandTarget(domain)
         try await releaseTunnel(domain)
 
         let client = try getClient()
@@ -535,6 +634,10 @@ final class AppModel {
         }
 
         await refreshAppStatus()
+
+        if isOnDemand {
+            await restoreOnDemand(excluding: domain)
+        }
     }
 
     func updateDomainSettings(_ domain: String, _ settings: Daemonv1.DomainSettings) async throws -> Daemonv1.DomainSettings {
@@ -562,7 +665,30 @@ final class AppModel {
 
             try await vpn.setOnDemand(domain)
         } else if vpn.domain == domain {
+            let isOnDemand = vpn.isOnDemandEnabled
             try await vpn.setOnDemand(nil)
+
+            if isOnDemand {
+                await restoreOnDemand(excluding: domain)
+            }
+        }
+
+        await refreshTunnel()
+    }
+
+    private func isOnDemandTarget(_ domain: String) -> Bool {
+        vpn.domain == domain && vpn.isOnDemandEnabled
+    }
+
+    private func restoreOnDemand(excluding domain: String) async {
+        guard !isVPNActive(vpn.state), let target = getOnDemandDomain(appStatus, prefs.primaryDomain, excluding: domain) else {
+            return
+        }
+
+        do {
+            try await vpn.setOnDemand(target)
+        } catch {
+            Log.app.warning("Could not enable auto connect for \(target, privacy: .public): \(getErrorMessage(error), privacy: .public)")
         }
 
         await refreshTunnel()
@@ -583,6 +709,10 @@ final class AppModel {
         }
 
         await refreshTunnel()
+
+        if isVPNActive(vpn.state) {
+            throw StatusError(.deadlineExceeded, "Timed out waiting for the VPN of \(domain) to disconnect")
+        }
     }
 }
 

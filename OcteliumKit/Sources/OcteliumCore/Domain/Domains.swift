@@ -296,6 +296,12 @@ private func matches(_ rgx: NSRegularExpression, _ arg: String) -> Bool {
     rgx.firstMatch(in: arg, range: NSRange(arg.startIndex..., in: arg)) != nil
 }
 
+public func isValidHostname(_ arg: String) -> Bool {
+    arg.count <= 253 &&
+        !arg.split(separator: ".", omittingEmptySubsequences: false).contains { $0.count > 63 } &&
+        matches(rgxDomain, arg)
+}
+
 public func validateDomain(_ arg: String) -> String? {
     let domain = arg.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 

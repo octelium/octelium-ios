@@ -126,7 +126,7 @@ private struct StartupErrorView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Resetting removes every stored Cluster domain, its credentials and its settings from this device. You will have to sign in again.")
+            Text("Resetting removes every stored Cluster domain, its credentials and its settings as well as the Octelium VPN configuration from this device. You will have to sign in again.")
         }
     }
 }

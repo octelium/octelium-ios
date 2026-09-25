@@ -46,7 +46,8 @@ The rule that the whole application follows is:
   `UNAUTHENTICATED`, exactly like the desktop and the Android applications.
 * The liboctelium state is encrypted with a random 32-byte key stored in the Keychain with
   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and shared with the provider via the App Group
-  access group. The provider never creates the key. The device identity is a random installation
+  access group. The provider never creates the key. The state is excluded from backups since it
+  cannot be decrypted without its device-bound key. The device identity is a random installation
   UUID stored the same way. No hardware identifier is used.
 * Every `ApplyTunnelConfiguration` is validated before being applied as a whole via
   `setTunnelNetworkSettings`. Default routes are refused, routes are canonicalized, only the IP
@@ -56,13 +57,17 @@ The rule that the whole application follows is:
 * iOS resolves the DNS queries per domain. The split DNS of a Connection uses
   `NEDNSSettings.matchDomains` so that only the Cluster domains are resolved by the Cluster DNS
   while the full DNS mode resolves every domain by the Cluster DNS.
-* The underlying network is tracked in the provider via `NWPathMonitor` and reported to
-  liboctelium via `SetNetworkState`.
+* The underlying network is tracked in both processes via `NWPathMonitor` and reported in order to
+  both liboctelium instances via `SetNetworkState`. The provider reports the current network before
+  it starts the Connection.
 * The browser authentication uses `ASWebAuthenticationSession`. The Portal redirects to
   `com.octelium.client:/callback/success` which is validated and passed to `CompleteAuthentication`.
 * Auto connect is implemented with VPN Connect On Demand. At most one Cluster is the On Demand
   target of the single Octelium VPN configuration. Disconnecting manually turns On Demand off until
-  the next Connection.
+  the next Connection. Signing out of, removing or turning auto connect off for the On Demand target
+  moves On Demand to the next authenticated Cluster with auto connect enabled.
+* Signing out, removing a domain and resetting the local state stop the VPN first and fail if it
+  does not stop. Resetting also removes the VPN configuration.
 
 ## Repository layout
 
@@ -152,7 +157,8 @@ the mobile API changes:
 OCTELIUM_PB_DIR=/path/to/the/protobuf/apis ./scripts/sync-proto.sh
 ```
 
-The protoc plugins are built out of the versions pinned by `OcteliumKit/Package.resolved`.
+The protoc plugins are built out of the versions pinned by `OcteliumKit/Package.resolved` and the
+well-known types are taken out of the pinned `swift-protobuf` checkout.
 
 ## Workflows
 

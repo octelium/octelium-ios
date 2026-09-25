@@ -262,6 +262,47 @@ final class PlatformRequestsTests: XCTestCase {
             await PlatformRequestHandler(host: FakeHost(), completer: completer).handle(5, try getRequest())
             XCTAssertEqual(1, completer.responses.count)
         }
+
+        do {
+            let host = FakeHost()
+            let completer = FakeCompleter()
+            await PlatformRequestHandler(host: host, completer: completer, domain: "example.com").handle(
+                6,
+                try getRequest(domain: "other.example.com")
+            )
+            XCTAssertEqual(6, completer.responses.first?.0)
+            XCTAssertEqual(
+                "The domain other.example.com is not handled by the tunnel of example.com",
+                completer.responses.first?.1.error.message
+            )
+            XCTAssertTrue(host.specs.isEmpty)
+        }
+
+        do {
+            let completer = FakeCompleter()
+            await PlatformRequestHandler(host: UnsupportedTunnelHost(), completer: completer).handle(7, try getRequest())
+            XCTAssertEqual(7, completer.responses.first?.0)
+            XCTAssertEqual(
+                "Only the packet tunnel provider can apply tunnel configurations",
+                completer.responses.first?.1.error.message
+            )
+        }
+    }
+
+    func testDomain() async throws {
+        let host = FakeHost()
+        let completer = FakeCompleter()
+        let h = PlatformRequestHandler(host: host, completer: completer, domain: "example.com")
+
+        await h.handle(1, try getRequest(domain: "example.com", generation: 1))
+        await h.handle(2, try getRequest(domain: "other.example.com", generation: 2))
+
+        XCTAssertEqual([1, 2], completer.responses.map(\.0))
+        XCTAssertEqual(["example.com"], host.specs.map(\.0))
+        guard case .applyTunnelConfiguration = completer.responses[0].1.type,
+              case .error = completer.responses[1].1.type else {
+            return XCTFail()
+        }
     }
 
     func testGetPlatformErrorResponse() {

@@ -15,6 +15,7 @@ struct FieldLabel: View {
 
 struct OctTextField: View {
     @Environment(\.octColors) private var colors
+    @Environment(\.scenePhase) private var scenePhase
 
     var label: String?
     var placeholder = ""
@@ -88,6 +89,11 @@ struct OctTextField: View {
                     )
             )
             .animation(.easeOut(duration: 0.15), value: isFocused)
+            .onChange(of: scenePhase) { _, new in
+                if new != .active {
+                    isRevealed = false
+                }
+            }
 
             if let error {
                 Text(error)

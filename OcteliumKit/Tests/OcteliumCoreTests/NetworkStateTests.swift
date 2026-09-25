@@ -1,3 +1,5 @@
+import Foundation
+import Synchronization
 import XCTest
 
 @testable import OcteliumCore
@@ -102,6 +104,94 @@ final class NetworkStateTests: XCTestCase {
     }
 }
 
+final class NetworkStateReporterTests: XCTestCase {
+
+    private let a = NetworkState(isAvailable: true, id: "wifi/en0/192.168.1.1/v4")
+    private let b = NetworkState(isAvailable: true, id: "cellular/pdp_ip0//v4,v6")
+    private let c = NetworkState(isAvailable: false, id: "")
+
+    func testUpdate() async {
+        let reported = Mutex<[NetworkState]>([])
+        let r = NetworkStateReporter { arg in
+            reported.withLock { $0.append(arg) }
+            return true
+        }
+
+        do {
+            let state = await r.state
+            XCTAssertNil(state)
+        }
+
+        await r.update(a)
+        await r.update(a)
+        await r.update(b)
+        await r.update(b)
+        await r.update(a)
+
+        XCTAssertEqual([a, b, a], reported.withLock { $0 })
+
+        let state = await r.state
+        XCTAssertEqual(a, state)
+    }
+
+    func testCoalesce() async throws {
+        let reported = Mutex<[NetworkState]>([])
+        let isReleased = Atomic<Bool>(false)
+        let r = NetworkStateReporter { arg in
+            reported.withLock { $0.append(arg) }
+            while !isReleased.load(ordering: .sequentiallyConsistent) {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            return true
+        }
+
+        let a = self.a
+        let task = Task {
+            await r.update(a)
+        }
+
+        while reported.withLock({ $0.isEmpty }) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        await r.update(b)
+        await r.update(c)
+        XCTAssertEqual([a], reported.withLock { $0 })
+
+        isReleased.store(true, ordering: .sequentiallyConsistent)
+        await task.value
+
+        XCTAssertEqual([a, c], reported.withLock { $0 })
+
+        let state = await r.state
+        XCTAssertEqual(c, state)
+    }
+
+    func testFailure() async {
+        let reported = Mutex<[NetworkState]>([])
+        let isFailing = Atomic<Bool>(true)
+        let r = NetworkStateReporter { arg in
+            reported.withLock { $0.append(arg) }
+            return !isFailing.load(ordering: .sequentiallyConsistent)
+        }
+
+        await r.update(a)
+        do {
+            let state = await r.state
+            XCTAssertNil(state)
+        }
+
+        isFailing.store(false, ordering: .sequentiallyConsistent)
+        await r.update(a)
+        await r.update(a)
+
+        XCTAssertEqual([a, a], reported.withLock { $0 })
+
+        let state = await r.state
+        XCTAssertEqual(a, state)
+    }
+}
+
 final class HostResolverTests: XCTestCase {
 
     func testResolveHost() async {
@@ -119,6 +209,32 @@ final class HostResolverTests: XCTestCase {
             let ret = await resolveHost("octelium-api.example.invalid")
             XCTAssertNotEqual(.resolved, ret.resolution)
             XCTAssertNotNil(getHostCheckError(ret))
+        }
+    }
+
+    func testResolveHostTimeout() async {
+        do {
+            let start = ContinuousClock.now
+            let ret = await resolveHost("octelium-api.example.com", timeout: .milliseconds(50)) { host in
+                Thread.sleep(forTimeInterval: 2)
+                return HostCheck(host: host, resolution: .resolved, addresses: ["192.0.2.1"])
+            }
+
+            XCTAssertLessThan(ContinuousClock.now - start, .seconds(1))
+            XCTAssertEqual(HostCheck(host: "octelium-api.example.com", resolution: .failed, message: "Timed out"), ret)
+            XCTAssertEqual("Could not resolve octelium-api.example.com: Timed out", getHostCheckError(ret))
+        }
+
+        do {
+            let ret = await resolveHost("octelium-api.example.com", timeout: .seconds(10)) { host in
+                HostCheck(host: host, resolution: .notFound)
+            }
+            XCTAssertEqual(HostCheck(host: "octelium-api.example.com", resolution: .notFound), ret)
+        }
+
+        do {
+            let ret = await resolveHost("localhost", timeout: .seconds(10))
+            XCTAssertEqual(.resolved, ret.resolution)
         }
     }
 }

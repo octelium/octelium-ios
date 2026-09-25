@@ -176,6 +176,18 @@ final class StateKeyTests: XCTestCase {
         XCTAssertFalse(isValidInstallationID("0f8fad5bd9cb469fa16570867728950e"))
     }
 
+    func testGetDeviceName() {
+        XCTAssertEqual("Alice's iPhone", getDeviceName(name: "Alice's iPhone", model: "iPhone", machine: "iPhone17,1"))
+        XCTAssertEqual("Alice's iPhone", getDeviceName(name: " Alice's iPhone ", model: "iPhone", machine: ""))
+        XCTAssertEqual("iPhone (iPhone17,1)", getDeviceName(name: "iPhone", model: "iPhone", machine: "iPhone17,1"))
+        XCTAssertEqual("iPad (iPad16,3)", getDeviceName(name: "", model: "iPad", machine: "iPad16,3"))
+        XCTAssertEqual("iPhone", getDeviceName(name: "iPhone", model: "iPhone", machine: ""))
+        XCTAssertEqual("iPhone", getDeviceName(name: "iPhone", model: "iPhone", machine: "iPhone"))
+        XCTAssertEqual("iPhone", getDeviceName(name: "iPhone", model: "", machine: "  "))
+        XCTAssertEqual("iOS device (iPhone17,1)", getDeviceName(name: "", model: "", machine: "iPhone17,1"))
+        XCTAssertEqual("iOS device", getDeviceName(name: "", model: "", machine: ""))
+    }
+
     func testSecretStoreError() {
         XCTAssertEqual(
             "The secure storage is not available until this device is unlocked",

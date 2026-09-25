@@ -73,6 +73,42 @@ public func getNetworkState(_ info: NetworkInfo?) -> NetworkState {
     return NetworkState(isAvailable: true, id: getNetworkID(info))
 }
 
+public actor NetworkStateReporter {
+    private let report: @Sendable (NetworkState) async -> Bool
+    private var reported: NetworkState?
+    private var pending: NetworkState?
+    private var isReporting = false
+
+    public init(_ report: @escaping @Sendable (NetworkState) async -> Bool) {
+        self.report = report
+    }
+
+    public var state: NetworkState? {
+        reported
+    }
+
+    public func update(_ arg: NetworkState) async {
+        pending = arg
+        if isReporting {
+            return
+        }
+
+        isReporting = true
+        defer {
+            isReporting = false
+        }
+
+        while let next = pending {
+            pending = nil
+            if next == reported {
+                continue
+            }
+
+            reported = await report(next) ? next : nil
+        }
+    }
+}
+
 public func getNetworkLabel(_ info: NetworkInfo?) -> String {
     guard let info else {
         return "No network"

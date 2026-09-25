@@ -11,8 +11,21 @@ public func getServicePublicFQDN(_ arg: Userv1.Service, _ domain: String) -> Str
     arg.status.primaryHostname.isEmpty ? domain : "\(arg.status.primaryHostname).\(domain)"
 }
 
-public func getServicePublicURL(_ arg: Userv1.Service, _ domain: String) -> String {
-    "https://\(getServicePublicFQDN(arg, domain))"
+public func getServicePublicURL(_ arg: Userv1.Service, _ domain: String) -> URL? {
+    let host = getServicePublicFQDN(arg, domain)
+    guard isValidHostname(host) else {
+        return nil
+    }
+
+    var ret = URLComponents()
+    ret.scheme = "https"
+    ret.host = host
+
+    guard let url = ret.url, url.host == host else {
+        return nil
+    }
+
+    return url
 }
 
 public func getServiceHostname(_ arg: Userv1.Service) -> String {

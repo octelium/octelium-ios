@@ -35,6 +35,12 @@ if [ -z "${PROTOC_GEN_SWIFT:-}" ] || [ -z "${PROTOC_GEN_GRPC_SWIFT:-}" ]; then
   PROTOC_GEN_GRPC_SWIFT="${PROTOC_GEN_GRPC_SWIFT:-${BIN_DIR}/protoc-gen-grpc-swift-2}"
 fi
 
+PROTO_PATHS=("--proto_path=.")
+WKT_DIR="${PROTOBUF_WKT_DIR:-${KIT_DIR}/.build/checkouts/swift-protobuf/Protos/Sources/SwiftProtobuf}"
+if [ -f "${WKT_DIR}/google/protobuf/timestamp.proto" ]; then
+  PROTO_PATHS+=("--proto_path=${WKT_DIR}")
+fi
+
 rm -rf "${PROTO_OUT_DIR}" "${GRPC_OUT_DIR}"
 mkdir -p "${PROTO_OUT_DIR}" "${GRPC_OUT_DIR}"
 
@@ -42,6 +48,7 @@ mkdir -p "${PROTO_OUT_DIR}" "${GRPC_OUT_DIR}"
   cd "${PROTO_DIR}"
 
   "${PROTOC}" \
+    "${PROTO_PATHS[@]}" \
     --plugin="protoc-gen-swift=${PROTOC_GEN_SWIFT}" \
     --swift_out="${PROTO_OUT_DIR}" \
     --swift_opt=Visibility=Public \
@@ -49,6 +56,7 @@ mkdir -p "${PROTO_OUT_DIR}" "${GRPC_OUT_DIR}"
     "${PROTOS[@]}"
 
   "${PROTOC}" \
+    "${PROTO_PATHS[@]}" \
     --plugin="protoc-gen-grpc-swift=${PROTOC_GEN_GRPC_SWIFT}" \
     --grpc-swift_out="${GRPC_OUT_DIR}" \
     --grpc-swift_opt=Visibility=Public \

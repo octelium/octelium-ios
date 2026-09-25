@@ -118,9 +118,9 @@ private struct AppSettings: View {
 
             SettingRow(
                 title: "Connect On Demand",
-                description: "iOS keeps the Cluster with auto connect enabled connected whenever a network is available. Enable it per Cluster in the Cluster settings."
+                description: "iOS keeps a single Cluster with auto connect enabled connected whenever a network is available. Enable it per Cluster in the Cluster settings."
             ) {
-                ValueText(text: model.isOnDemandEnabled ? "On" : "Off")
+                ValueText(text: model.isOnDemandEnabled ? (model.tunnel.domain ?? "On") : "Off")
             }
 
             SettingRow(title: "Diagnostics", description: "Runtime information for troubleshooting.", isLast: true) {

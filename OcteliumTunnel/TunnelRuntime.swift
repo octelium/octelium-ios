@@ -16,7 +16,8 @@ actor TunnelRuntime {
     private var client: LocalClient?
     private var status: Daemonv1.GetStatusResponse?
     private var pathMonitor: PathMonitor?
-    private var networkState: NetworkState?
+    private var networkReporter: NetworkStateReporter?
+    private var networkTask: Task<Void, Never>?
     private var connectOperationID: String?
     private var startCompletion: ((Error?) -> Void)?
     private var startTimeoutTask: Task<Void, Never>?
@@ -52,7 +53,7 @@ actor TunnelRuntime {
             return
         }
 
-        await setNetwork(pathMonitor.current)
+        await networkReporter?.update(getNetworkState(pathMonitor.current))
     }
 
     func handleMessage(_ msg: TunnelMessage) async -> Data? {
@@ -120,7 +121,9 @@ actor TunnelRuntime {
         )
 
         let lib = try LibOctelium.create(cfg, callbacks)
-        callbacks.setRequestHandler(PlatformRequestHandler(host: TunnelSettingsHost(provider: provider), completer: lib))
+        callbacks.setRequestHandler(
+            PlatformRequestHandler(host: TunnelSettingsHost(provider: provider), completer: lib, domain: domain)
+        )
 
         if isShutdown {
             await closeLib(lib)
@@ -143,8 +146,12 @@ actor TunnelRuntime {
             return
         }
 
-        startPathMonitor()
         startTimeout()
+        await startPathMonitor(client)
+
+        if isShutdown {
+            return
+        }
 
         let op = try await client.connect(domain)
         connectOperationID = op.id
@@ -180,29 +187,31 @@ actor TunnelRuntime {
         }
     }
 
-    private func startPathMonitor() {
+    private func startPathMonitor(_ client: LocalClient) async {
+        let reporter = NetworkStateReporter { state in
+            do {
+                _ = try await client.setNetworkState(state)
+                return true
+            } catch {
+                Log.tunnel.warning("Could not set the network state: \(getErrorMessage(error), privacy: .public)")
+                return false
+            }
+        }
+        networkReporter = reporter
+
         let monitor = PathMonitor()
         pathMonitor = monitor
 
-        monitor.start { [weak self] info in
-            Task {
-                await self?.setNetwork(info)
+        var updates = monitor.start().makeAsyncIterator()
+        if let info = await updates.next() {
+            await reporter.update(getNetworkState(info))
+        }
+
+        networkTask = Task { [updates] in
+            var updates = updates
+            while let info = await updates.next() {
+                await reporter.update(getNetworkState(info))
             }
-        }
-    }
-
-    private func setNetwork(_ info: NetworkInfo) async {
-        let state = getNetworkState(info)
-        guard state != networkState, let client else {
-            return
-        }
-
-        networkState = state
-
-        do {
-            _ = try await client.setNetworkState(state)
-        } catch {
-            Log.tunnel.warning("Could not set the network state: \(getErrorMessage(error), privacy: .public)")
         }
     }
 
@@ -236,7 +245,7 @@ actor TunnelRuntime {
         }
 
         status = arg
-        DarwinNotification.post(tunnelStatusNotification)
+        DarwinNotification.post(AppGroup.tunnelStatusNotification)
 
         let state = getDomainState(arg, domain)
 
@@ -306,6 +315,9 @@ actor TunnelRuntime {
         startTimeoutTask?.cancel()
         pathMonitor?.cancel()
         pathMonitor = nil
+        networkTask?.cancel()
+        networkTask = nil
+        networkReporter = nil
 
         guard let lib, let client else {
             return

@@ -64,10 +64,20 @@ final class VPNController {
 
     func load() async {
         do {
-            let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-            let ret = managers.first {
+            let managers = try await NETunnelProviderManager.loadAllFromPreferences().filter {
                 ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == providerBundleIdentifier
             }
+
+            let ret = managers.first { isVPNActive(getVPNState($0.connection.status)) } ?? managers.first
+
+            for itm in managers where itm !== ret {
+                do {
+                    try await itm.removeFromPreferences()
+                } catch {
+                    Log.app.warning("Could not remove a duplicate VPN configuration: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+
             setManager(ret)
         } catch {
             Log.app.error("Could not load the VPN configuration: \(error.localizedDescription, privacy: .public)")
@@ -93,12 +103,38 @@ final class VPNController {
             return
         }
 
+        var saveErr: Error?
         if manager.isOnDemandEnabled {
             manager.isOnDemandEnabled = false
-            try await save(manager)
+
+            do {
+                try await save(manager)
+            } catch {
+                saveErr = error
+            }
         }
 
         manager.connection.stopVPNTunnel()
+
+        if let saveErr {
+            try? await manager.loadFromPreferences()
+            onChange?()
+            throw saveErr
+        }
+    }
+
+    func remove() async throws {
+        guard let manager else {
+            return
+        }
+
+        do {
+            try await manager.removeFromPreferences()
+        } catch {
+            throw StatusError(.internal, "Could not remove the VPN configuration: \(error.localizedDescription)")
+        }
+
+        setManager(nil)
     }
 
     func setOnDemand(_ domain: String?) async throws {

@@ -162,3 +162,20 @@ public func isValidInstallationID(_ arg: String) -> Bool {
 
     return ret.uuidString.lowercased() == arg.lowercased()
 }
+
+public func getDeviceName(name: String, model: String, machine: String) -> String {
+    let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let model = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    let machine = machine.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    if !name.isEmpty && name != model {
+        return name
+    }
+
+    let base = [model, name].first { !$0.isEmpty } ?? "iOS device"
+    if machine.isEmpty || machine == base {
+        return base
+    }
+
+    return "\(base) (\(machine))"
+}

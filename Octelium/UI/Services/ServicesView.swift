@@ -241,11 +241,9 @@ private struct ServiceItem: View {
             .buttonStyle(.plain)
             .accessibilityHint(isExpanded ? "Hide the details" : "Show the details")
 
-            if item.spec.isPublic && isServiceWebBrowsable(item) {
+            if item.spec.isPublic && isServiceWebBrowsable(item), let url = getServicePublicURL(item, domain) {
                 OctButton(text: "Open", icon: "arrow.up.right", variant: .outline, size: .xs) {
-                    if let url = URL(string: getServicePublicURL(item, domain)) {
-                        openURL(url)
-                    }
+                    openURL(url)
                 }
                 .padding(.top, 12)
             }

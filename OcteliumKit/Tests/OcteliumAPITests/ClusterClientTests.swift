@@ -385,6 +385,80 @@ final class ClusterClientTests: XCTestCase {
             c.clear()
             XCTAssertNil(c.get("b.example.com"))
         }
+
+        do {
+            c.set("example.com", getCredential("token"))
+            XCTAssertEqual("token", c.get("example.com"))
+
+            now.withLock { $0 = $0.addingTimeInterval(credentialMaxAge - credentialExpiryMargin - 1) }
+            XCTAssertEqual("token", c.get("example.com"))
+
+            now.withLock { $0 = $0.addingTimeInterval(2) }
+            XCTAssertNil(c.get("example.com"))
+        }
+
+        do {
+            let generation = c.generation
+            XCTAssertTrue(c.set("example.com", getCredential("token"), generation: generation))
+            XCTAssertEqual("token", c.get("example.com"))
+
+            c.remove("other.example.com")
+            XCTAssertNotEqual(generation, c.generation)
+            XCTAssertFalse(c.set("example.com", getCredential("stale"), generation: generation))
+            XCTAssertEqual("token", c.get("example.com"))
+
+            let next = c.generation
+            c.clear()
+            XCTAssertFalse(c.set("example.com", getCredential("stale"), generation: next))
+            XCTAssertNil(c.get("example.com"))
+
+            XCTAssertTrue(c.set("example.com", getCredential("token-2"), generation: c.generation))
+            XCTAssertEqual("token-2", c.get("example.com"))
+        }
+    }
+
+    func testInvalidateDuringFetch() async throws {
+        let state = ServerState()
+        let count = Atomic<Int>(0)
+        let isReleased = Atomic<Bool>(false)
+        state.validTokens.withLock { $0.formUnion(["token-1", "token-2"]) }
+
+        let c = getClient(state) { _ in
+            let n = count.add(1, ordering: .sequentiallyConsistent).newValue
+            if n == 1 {
+                while !isReleased.load(ordering: .sequentiallyConsistent) {
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+            }
+            return getCredential("token-\(n)")
+        }
+
+        let task = Task {
+            try await c.getStatus("example.com")
+        }
+
+        while count.load(ordering: .sequentiallyConsistent) == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        c.invalidate("example.com")
+
+        do {
+            _ = try await c.getStatus("example.com")
+            XCTAssertEqual(2, count.load(ordering: .sequentiallyConsistent))
+            XCTAssertEqual("token-2", state.tokens.withLock { $0.last! })
+        }
+
+        isReleased.store(true, ordering: .sequentiallyConsistent)
+        _ = try? await task.value
+
+        do {
+            _ = try await c.getStatus("example.com")
+            XCTAssertEqual(2, count.load(ordering: .sequentiallyConsistent))
+            XCTAssertEqual("token-2", state.tokens.withLock { $0.last! })
+        }
+
+        c.close()
     }
 
     func testGetClusterAPIHost() {

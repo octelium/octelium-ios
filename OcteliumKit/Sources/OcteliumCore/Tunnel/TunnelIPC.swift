@@ -2,9 +2,12 @@ import Foundation
 import OcteliumProto
 
 public let tunnelDomainKey = "domain"
-public let tunnelStatusNotification = "com.octelium.client.tunnel.status"
 public let tunnelErrorDomain = "com.octelium.client.tunnel"
 public let maxTunnelLogs = 200
+
+public func getTunnelStatusNotification(_ appGroup: String) -> String {
+    "\(appGroup).tunnel.status"
+}
 
 public enum TunnelMessage: UInt8, Sendable {
     case getStatus = 1

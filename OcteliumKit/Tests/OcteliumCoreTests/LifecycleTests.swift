@@ -164,5 +164,15 @@ final class LifecycleTests: XCTestCase {
             )
             XCTAssertEqual("a.example.com", getOnDemandDomain(status, "b.example.com"))
         }
+        do {
+            let status = getTestStatus(
+                getTestDomain("a.example.com", auth: .authenticated, autoConnect: true),
+                getTestDomain("b.example.com", auth: .authenticated, autoConnect: true)
+            )
+            XCTAssertEqual("b.example.com", getOnDemandDomain(status, "a.example.com", excluding: "a.example.com"))
+            XCTAssertEqual("b.example.com", getOnDemandDomain(status, nil, excluding: "a.example.com"))
+            XCTAssertEqual("a.example.com", getOnDemandDomain(status, nil, excluding: "c.example.com"))
+            XCTAssertNil(getOnDemandDomain(getTestStatus(status.domains[0]), nil, excluding: "a.example.com"))
+        }
     }
 }

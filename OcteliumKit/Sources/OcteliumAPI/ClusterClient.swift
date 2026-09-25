@@ -13,6 +13,7 @@ import GRPCNIOTransportHTTP2Posix
 public let authMetadataKey = "x-octelium-auth"
 public let clusterAPIPort = 443
 public let credentialExpiryMargin: TimeInterval = 30
+public let credentialMaxAge: TimeInterval = 300
 public let clusterIdleTimeout: Duration = .seconds(300)
 
 public func getClusterAPIHost(_ domain: String) -> String {
@@ -26,48 +27,69 @@ public typealias ConnectionFactory = @Sendable (String) throws -> any ClusterCon
 public final class CredentialCache: Sendable {
     private struct Credential {
         let accessToken: String
-        let expiresAt: Date?
+        let expiresAt: Date
     }
 
-    private let credentials = Mutex<[String: Credential]>([:])
+    private struct State {
+        var credentials: [String: Credential] = [:]
+        var generation: UInt64 = 0
+    }
+
+    private let state = Mutex(State())
     private let now: @Sendable () -> Date
 
     public init(now: @escaping @Sendable () -> Date = { Date() }) {
         self.now = now
     }
 
+    public var generation: UInt64 {
+        state.withLock { $0.generation }
+    }
+
     public func get(_ domain: String) -> String? {
         let at = now()
 
-        return credentials.withLock { itms in
-            guard let ret = itms[domain] else {
+        return state.withLock { st in
+            guard let ret = st.credentials[domain] else {
                 return nil
             }
 
-            guard let expiresAt = ret.expiresAt else {
+            if at.addingTimeInterval(credentialExpiryMargin) < ret.expiresAt {
                 return ret.accessToken
             }
 
-            if at.addingTimeInterval(credentialExpiryMargin) < expiresAt {
-                return ret.accessToken
-            }
-
-            itms[domain] = nil
+            st.credentials[domain] = nil
             return nil
         }
     }
 
-    public func set(_ domain: String, _ arg: Daemonv1.GetAPICredentialResponse) {
-        let ret = Credential(accessToken: arg.accessToken, expiresAt: arg.hasExpiresAt ? arg.expiresAt.date : nil)
-        credentials.withLock { $0[domain] = ret }
+    @discardableResult
+    public func set(_ domain: String, _ arg: Daemonv1.GetAPICredentialResponse, generation: UInt64? = nil) -> Bool {
+        let expiresAt = arg.hasExpiresAt ? arg.expiresAt.date : now().addingTimeInterval(credentialMaxAge)
+        let ret = Credential(accessToken: arg.accessToken, expiresAt: expiresAt)
+
+        return state.withLock { st in
+            if let generation, generation != st.generation {
+                return false
+            }
+
+            st.credentials[domain] = ret
+            return true
+        }
     }
 
     public func remove(_ domain: String) {
-        _ = credentials.withLock { $0.removeValue(forKey: domain) }
+        state.withLock { st in
+            st.credentials[domain] = nil
+            st.generation &+= 1
+        }
     }
 
     public func clear() {
-        credentials.withLock { $0.removeAll() }
+        state.withLock { st in
+            st.credentials.removeAll()
+            st.generation &+= 1
+        }
     }
 }
 
@@ -155,17 +177,28 @@ public func newClusterConnection(_ domain: String) throws -> any ClusterConnecti
 }
 
 private actor CredentialFetcher {
-    private var tasks: [String: Task<String, Error>] = [:]
+    private struct Fetch {
+        let generation: UInt64
+        let task: Task<String, Error>
+    }
 
-    func get(_ domain: String, _ fn: @escaping @Sendable () async throws -> String) async throws -> String {
-        if let ret = tasks[domain] {
-            return try await ret.value
+    private var fetches: [String: Fetch] = [:]
+
+    func get(
+        _ domain: String,
+        generation: UInt64,
+        _ fn: @escaping @Sendable () async throws -> String
+    ) async throws -> String {
+        if let ret = fetches[domain], ret.generation == generation {
+            return try await ret.task.value
         }
 
         let task = Task { try await fn() }
-        tasks[domain] = task
+        fetches[domain] = Fetch(generation: generation, task: task)
         defer {
-            tasks[domain] = nil
+            if fetches[domain]?.task == task {
+                fetches[domain] = nil
+            }
         }
 
         return try await task.value
@@ -307,14 +340,15 @@ public final class ClusterClient: Sendable {
 
         let credentials = self.credentials
         let cache = self.cache
+        let generation = cache.generation
 
-        return try await fetcher.get(domain) {
+        return try await fetcher.get(domain, generation: generation) {
             let resp = try await credentials(domain)
             if resp.accessToken.isEmpty {
                 throw StatusError(.unauthenticated, "You are not authenticated to the domain \(domain)")
             }
 
-            cache.set(domain, resp)
+            cache.set(domain, resp, generation: generation)
 
             return resp.accessToken
         }
