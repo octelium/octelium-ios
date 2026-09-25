@@ -1,5 +1,6 @@
 import Foundation
 import OcteliumProto
+import Synchronization
 
 public protocol TunnelHost: Sendable {
     func apply(domain: String, generation: UInt64, spec: TunnelSpec) async throws -> Int32?
@@ -9,13 +10,23 @@ public protocol RequestCompleter: Sendable {
     func complete(_ requestID: UInt64, _ response: Data) -> Int32
 }
 
-public struct PlatformRequestHandler: Sendable {
+public final class PlatformRequestHandler: Sendable {
+    private struct ApplyState {
+        var latestGeneration: UInt64 = 0
+        var lastApply: Task<Void, Never>?
+    }
+
     private let host: any TunnelHost
     private let completer: any RequestCompleter
+    private let state = Mutex(ApplyState())
 
     public init(host: any TunnelHost, completer: any RequestCompleter) {
         self.host = host
         self.completer = completer
+    }
+
+    var latestGeneration: UInt64 {
+        state.withLock { $0.latestGeneration }
     }
 
     public func handle(_ requestID: UInt64, _ data: Data) async {
@@ -39,6 +50,8 @@ public struct PlatformRequestHandler: Sendable {
         _ requestID: UInt64,
         _ req: Mobilev1.PlatformRequest.ApplyTunnelConfiguration
     ) async {
+        state.withLock { $0.latestGeneration = max($0.latestGeneration, req.generation) }
+
         if req.domain.isEmpty {
             completeError(requestID, "The domain is not set")
             return
@@ -49,6 +62,31 @@ public struct PlatformRequestHandler: Sendable {
             spec = try getTunnelSpec(req.configuration)
         } catch {
             completeError(requestID, getErrorMessage(error))
+            return
+        }
+
+        let task = state.withLock { st in
+            let prev = st.lastApply
+            let ret = Task {
+                if let prev {
+                    await prev.value
+                }
+                await self.apply(requestID, req, spec)
+            }
+            st.lastApply = ret
+            return ret
+        }
+
+        await task.value
+    }
+
+    private func apply(
+        _ requestID: UInt64,
+        _ req: Mobilev1.PlatformRequest.ApplyTunnelConfiguration,
+        _ spec: TunnelSpec
+    ) async {
+        if state.withLock({ req.generation < $0.latestGeneration }) {
+            completeError(requestID, "The tunnel configuration is stale")
             return
         }
 

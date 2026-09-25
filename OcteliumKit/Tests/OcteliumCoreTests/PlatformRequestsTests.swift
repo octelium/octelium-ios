@@ -5,14 +5,57 @@ import XCTest
 
 @testable import OcteliumCore
 
+private final class Gate: Sendable {
+    private struct State {
+        var isOpen = false
+        var waiters: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private let state = Mutex(State())
+
+    var waiterCount: Int {
+        state.withLock { $0.waiters.count }
+    }
+
+    func wait() async {
+        await withCheckedContinuation { cont in
+            let isOpen = state.withLock { st in
+                if !st.isOpen {
+                    st.waiters.append(cont)
+                }
+                return st.isOpen
+            }
+
+            if isOpen {
+                cont.resume()
+            }
+        }
+    }
+
+    func open() {
+        let waiters = state.withLock { st in
+            st.isOpen = true
+            let ret = st.waiters
+            st.waiters = []
+            return ret
+        }
+
+        for itm in waiters {
+            itm.resume()
+        }
+    }
+}
+
 private final class FakeHost: TunnelHost {
     private let err: Error?
     private let tunFD: Int32?
+    private let gate: Gate?
     private let state = Mutex<[(String, UInt64, TunnelSpec)]>([])
 
-    init(err: Error? = nil, tunFD: Int32? = nil) {
+    init(err: Error? = nil, tunFD: Int32? = nil, gate: Gate? = nil) {
         self.err = err
         self.tunFD = tunFD
+        self.gate = gate
     }
 
     var specs: [(String, UInt64, TunnelSpec)] {
@@ -20,6 +63,8 @@ private final class FakeHost: TunnelHost {
     }
 
     func apply(domain: String, generation: UInt64, spec: TunnelSpec) async throws -> Int32? {
+        await gate?.wait()
+
         if let err {
             throw err
         }
@@ -96,6 +141,77 @@ final class PlatformRequestsTests: XCTestCase {
 
         XCTAssertTrue(completer.responses[0].1.applyTunnelConfiguration.hasTunFd)
         XCTAssertEqual(100, completer.responses[0].1.applyTunnelConfiguration.tunFd)
+    }
+
+    private func waitFor(
+        _ fn: () -> Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        let deadline = Date().addingTimeInterval(10)
+
+        while !fn() {
+            if Date() > deadline {
+                XCTFail("Timed out", file: file, line: line)
+                return
+            }
+
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func testStaleGeneration() async throws {
+        let host = FakeHost()
+        let completer = FakeCompleter()
+        let h = PlatformRequestHandler(host: host, completer: completer)
+
+        await h.handle(1, try getRequest(generation: 5))
+        await h.handle(2, try getRequest(generation: 3))
+        await h.handle(3, try getRequest(generation: 6))
+
+        XCTAssertEqual([5, 6], host.specs.map { $0.1 })
+        XCTAssertEqual([1, 2, 3], completer.responses.map { $0.0 })
+        XCTAssertEqual("The tunnel configuration is stale", completer.responses[1].1.error.message)
+        guard case .applyTunnelConfiguration = completer.responses[2].1.type else {
+            return XCTFail()
+        }
+    }
+
+    func testStaleGenerationWhileApplying() async throws {
+        let gate = Gate()
+        let host = FakeHost(gate: gate)
+        let completer = FakeCompleter()
+        let h = PlatformRequestHandler(host: host, completer: completer)
+
+        let req1 = try getRequest(generation: 1)
+        let req2 = try getRequest(generation: 2)
+        let req3 = try getRequest(generation: 3)
+
+        let task1 = Task { await h.handle(1, req1) }
+        try await waitFor { gate.waiterCount == 1 }
+
+        let task2 = Task { await h.handle(2, req2) }
+        try await waitFor { h.latestGeneration == 2 }
+
+        let task3 = Task { await h.handle(3, req3) }
+        try await waitFor { h.latestGeneration == 3 }
+
+        XCTAssertTrue(completer.responses.isEmpty)
+
+        gate.open()
+        await task1.value
+        await task2.value
+        await task3.value
+
+        XCTAssertEqual([1, 3], host.specs.map { $0.1 })
+        XCTAssertEqual(3, completer.responses.count)
+        XCTAssertEqual(
+            "The tunnel configuration is stale",
+            completer.responses.first { $0.0 == 2 }?.1.error.message
+        )
+        guard case .applyTunnelConfiguration = completer.responses.first(where: { $0.0 == 3 })?.1.type else {
+            return XCTFail()
+        }
     }
 
     func testErrors() async throws {
