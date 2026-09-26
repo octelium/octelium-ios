@@ -52,7 +52,7 @@ final class OcteliumClientTests: XCTestCase {
             db: DB(dir: dir, key: key),
             device: device,
             channels: { _ in cluster.newChannel() },
-            tunnels: hasTunnels ? { tunnels.create($0) } : nil,
+            tunnels: hasTunnels ? { @Sendable handler in tunnels.create(handler) } : nil,
             host: host,
             onStatus: { statusStore.update($0) },
             network: NetworkWatcher { _ in .milliseconds(20) }
