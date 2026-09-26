@@ -5,13 +5,13 @@ permissions: {}
 on:
   workflow_dispatch:
     inputs:
-      octelium_ref:
-        description: The Octelium branch, tag or commit whose liboctelium is bundled
+      liboctelium_ref:
+        description: The liboctelium branch, tag or commit that is bundled
         required: false
         default: main
 
 jobs:
-  resolve-octelium:
+  resolve-liboctelium:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -20,19 +20,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: octelium/octelium
-          ref: ${{ inputs.octelium_ref }}
-          path: octelium-source
+          repository: octelium/liboctelium
+          ref: ${{ inputs.liboctelium_ref }}
+          path: liboctelium-source
           persist-credentials: false
       - id: resolve
         shell: bash
         run: |
           set -euo pipefail
-          commit="$(git -C octelium-source rev-parse HEAD)"
+          commit="$(git -C liboctelium-source rev-parse HEAD)"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
   build:
-    needs: resolve-octelium
+    needs: resolve-liboctelium
     runs-on: macos-26
     permissions:
       contents: read
@@ -42,17 +42,20 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: octelium/octelium
-          ref: ${{ needs.resolve-octelium.outputs.commit }}
-          path: octelium-source
+          repository: octelium/liboctelium
+          ref: ${{ needs.resolve-liboctelium.outputs.commit }}
+          path: liboctelium-source
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        with:
-          go-version-file: octelium-source/go.work
-          cache-dependency-path: octelium-source/client/liboctelium/go.sum
-      - name: Build liboctelium from ${{ inputs.octelium_ref }}
+      - name: Install Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+      - name: Build liboctelium from ${{ inputs.liboctelium_ref }}
         env:
-          OCTELIUM_SOURCE_DIR: ${{ github.workspace }}/octelium-source
+          LIBOCTELIUM_SOURCE_DIR: ${{ github.workspace }}/liboctelium-source
         run: ./scripts/build-liboctelium.sh
       - name: Generate the project
         shell: bash
@@ -80,7 +83,7 @@ jobs:
             -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
       - name: Collect artifacts
         env:
-          OCTELIUM_COMMIT: ${{ needs.resolve-octelium.outputs.commit }}
+          LIBOCTELIUM_COMMIT: ${{ needs.resolve-liboctelium.outputs.commit }}
         shell: bash
         run: |
           set -euo pipefail
@@ -91,7 +94,7 @@ jobs:
           (cd build/ipa && zip -qry "$output/octelium-ios-release-unsigned.ipa" Payload)
           (cd build && zip -qry "$output/octelium-ios-release-unsigned.xcarchive.zip" Octelium.xcarchive)
           (cd build/simulator/Build/Products/Debug-iphonesimulator && zip -qry "$output/octelium-ios-simulator.app.zip" Octelium.app)
-          printf '%s\n' "$OCTELIUM_COMMIT" > "$output/OCTELIUM_COMMIT"
+          printf '%s\n' "$LIBOCTELIUM_COMMIT" > "$output/LIBOCTELIUM_COMMIT"
           git rev-parse HEAD > "$output/OCTELIUM_IOS_COMMIT"
           cd "$output"
           shasum -a 256 * > SHA256SUMS

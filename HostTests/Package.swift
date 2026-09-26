@@ -31,9 +31,12 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags(["-L\(hostLibDir)"]),
                 .linkedLibrary("octelium"),
-                .linkedLibrary("resolv", .when(platforms: [.macOS])),
-                .linkedFramework("CoreFoundation", .when(platforms: [.macOS])),
-                .linkedFramework("Security", .when(platforms: [.macOS])),
+                .linkedLibrary("gcc_s", .when(platforms: [.linux])),
+                .linkedLibrary("util", .when(platforms: [.linux])),
+                .linkedLibrary("rt", .when(platforms: [.linux])),
+                .linkedLibrary("pthread", .when(platforms: [.linux])),
+                .linkedLibrary("m", .when(platforms: [.linux])),
+                .linkedLibrary("dl", .when(platforms: [.linux])),
             ]
         ),
     ]

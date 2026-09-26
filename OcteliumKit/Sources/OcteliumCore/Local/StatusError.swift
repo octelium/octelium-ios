@@ -1,9 +1,5 @@
 import Foundation
 
-public protocol LocalTransport: Sendable {
-    func call(_ method: String, _ request: Data) async throws -> Data
-}
-
 public enum StatusCode: Int32, Sendable, CaseIterable {
     case ok = 0
     case canceled = 1

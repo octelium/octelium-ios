@@ -44,7 +44,6 @@ targets:
         PROVISIONING_PROFILE_SPECIFIER: $(OCTELIUM_APP_PROFILE)
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        OTHER_LDFLAGS: $(inherited) $(OCTELIUM_LDFLAGS)
     dependencies:
       - target: OcteliumTunnel
       - package: OcteliumKit
@@ -73,12 +72,13 @@ targets:
         CODE_SIGN_ENTITLEMENTS: OcteliumTunnel/OcteliumTunnel.entitlements
         PROVISIONING_PROFILE_SPECIFIER: $(OCTELIUM_TUNNEL_PROFILE)
         APPLICATION_EXTENSION_API_ONLY: YES
-        OTHER_LDFLAGS: $(inherited) $(OCTELIUM_LDFLAGS)
     dependencies:
       - package: OcteliumKit
         product: OcteliumProto
       - package: OcteliumKit
         product: OcteliumCore
+      - package: OcteliumKit
+        product: OcteliumAPI
       - package: OcteliumKit
         product: LibOctelium
       - framework: liboctelium/liboctelium.xcframework

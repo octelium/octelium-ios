@@ -13,7 +13,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      octelium-tag: ${{ steps.resolve.outputs.tag }}
+      liboctelium-tag: ${{ steps.resolve.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          requested="$(gh release view --repo octelium/octelium --json tagName --jq .tagName)"
+          requested="$(gh release view --repo octelium/liboctelium --json tagName --jq .tagName)"
           [[ "$requested" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "tag=$requested" >> "$GITHUB_OUTPUT"
 
@@ -51,18 +51,21 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: octelium/octelium
-          ref: ${{ needs.validate.outputs.octelium-tag }}
-          path: octelium-source
+          repository: octelium/liboctelium
+          ref: ${{ needs.validate.outputs.liboctelium-tag }}
+          path: liboctelium-source
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        with:
-          go-version-file: octelium-source/go.work
-          cache: false
-      - name: Build liboctelium ${{ needs.validate.outputs.octelium-tag }}
+      - name: Install Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+      - name: Build liboctelium ${{ needs.validate.outputs.liboctelium-tag }}
         env:
-          OCTELIUM_SOURCE_DIR: ${{ github.workspace }}/octelium-source
-          OCTELIUM_TAG: ${{ needs.validate.outputs.octelium-tag }}
+          LIBOCTELIUM_SOURCE_DIR: ${{ github.workspace }}/liboctelium-source
+          LIBOCTELIUM_TAG: ${{ needs.validate.outputs.liboctelium-tag }}
         run: ./scripts/build-liboctelium.sh
       - name: Generate the project
         shell: bash
@@ -176,7 +179,7 @@ jobs:
       - name: Collect artifacts
         env:
           RELEASE_VERSION: ${{ github.ref_name }}
-          OCTELIUM_TAG: ${{ needs.validate.outputs.octelium-tag }}
+          LIBOCTELIUM_TAG: ${{ needs.validate.outputs.liboctelium-tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -184,8 +187,8 @@ jobs:
           mkdir "$output"
           cp build/export/*.ipa "$output/octelium-ios-${RELEASE_VERSION}.ipa"
           (cd build/Octelium.xcarchive && zip -qry "$output/octelium-ios-${RELEASE_VERSION}-dSYMs.zip" dSYMs)
-          printf '%s\n' "$OCTELIUM_TAG" > "$output/OCTELIUM_VERSION"
-          cp liboctelium/OCTELIUM_COMMIT "$output/OCTELIUM_COMMIT"
+          printf '%s\n' "$LIBOCTELIUM_TAG" > "$output/LIBOCTELIUM_VERSION"
+          cp liboctelium/LIBOCTELIUM_COMMIT "$output/LIBOCTELIUM_COMMIT"
       - name: Clean up the signing identity
         if: always()
         shell: bash

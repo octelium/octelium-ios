@@ -1,5 +1,4 @@
 import Foundation
-import OcteliumProto
 
 public enum IPFamily: Sendable {
     case v4
@@ -290,7 +289,7 @@ private func getHostPrefix(_ arg: IPAddress) -> IPPrefix {
     IPPrefix(address: arg, prefixLength: arg.family == .v4 ? 32 : 128)
 }
 
-public func getTunnelSpec(_ cfg: Mobilev1.TunnelConfiguration) throws -> TunnelSpec {
+public func getTunnelSpec(_ cfg: NetworkConfig) throws -> TunnelSpec {
     let addresses = try cfg.addresses.map { try parsePrefix($0) }
     if addresses.isEmpty {
         throw InvalidTunnelConfigurationError("The tunnel configuration has no addresses")
@@ -314,7 +313,7 @@ public func getTunnelSpec(_ cfg: Mobilev1.TunnelConfiguration) throws -> TunnelS
         }
     }
 
-    let mtu = Int(cfg.mtu)
+    let mtu = cfg.mtu
     if mtu != 0 && (mtu < minTunnelMTU || mtu > maxTunnelMTU) {
         throw InvalidTunnelConfigurationError("Invalid MTU: \(mtu)")
     }
@@ -327,9 +326,9 @@ public func getTunnelSpec(_ cfg: Mobilev1.TunnelConfiguration) throws -> TunnelS
 
     var dns: TunnelDNS?
 
-    if cfg.hasDns && !cfg.dns.servers.isEmpty {
+    if let cfgDNS = cfg.dns, !cfgDNS.servers.isEmpty {
         var servers: [IPAddress] = []
-        for itm in cfg.dns.servers {
+        for itm in cfgDNS.servers {
             let server = try parseIP(itm)
             if !families.contains(server.family) {
                 throw InvalidTunnelConfigurationError("The DNS server \(server) has no address of the same family")
@@ -340,18 +339,18 @@ public func getTunnelSpec(_ cfg: Mobilev1.TunnelConfiguration) throws -> TunnelS
             }
         }
 
-        let searchDomains = try normalizeDomains(cfg.dns.searchDomains)
-        var matchDomains = try normalizeDomains(cfg.dns.matchDomains)
-        if !cfg.dns.matchAllDomains && matchDomains.isEmpty {
+        let searchDomains = try normalizeDomains(cfgDNS.searchDomains)
+        var matchDomains = try normalizeDomains(cfgDNS.matchDomains)
+        if !cfgDNS.matchAllDomains && matchDomains.isEmpty {
             matchDomains = searchDomains
         }
 
-        if cfg.dns.matchAllDomains || !matchDomains.isEmpty {
+        if cfgDNS.matchAllDomains || !matchDomains.isEmpty {
             dns = TunnelDNS(
                 servers: servers,
                 searchDomains: searchDomains,
-                matchDomains: cfg.dns.matchAllDomains ? [] : matchDomains,
-                matchAllDomains: cfg.dns.matchAllDomains
+                matchDomains: cfgDNS.matchAllDomains ? [] : matchDomains,
+                matchAllDomains: cfgDNS.matchAllDomains
             )
 
             for server in servers where !routes.contains(where: { $0.contains(server) }) {

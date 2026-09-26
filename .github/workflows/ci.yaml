@@ -43,18 +43,22 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: octelium/octelium
+          repository: octelium/liboctelium
           ref: main
-          path: octelium-source
+          path: liboctelium-source
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        with:
-          go-version-file: octelium-source/go.work
-          cache-dependency-path: octelium-source/client/liboctelium/go.sum
+      - name: Install Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Build the host library
         env:
           CC: clang
-          OCTELIUM_SOURCE_DIR: ${{ github.workspace }}/octelium-source
+          LIBOCTELIUM_SOURCE_DIR: ${{ github.workspace }}/liboctelium-source
         run: ./scripts/build-host-libs.sh
       - name: Run the liboctelium integration tests
         run: swift test --package-path HostTests
@@ -69,17 +73,20 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: octelium/octelium
+          repository: octelium/liboctelium
           ref: main
-          path: octelium-source
+          path: liboctelium-source
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        with:
-          go-version-file: octelium-source/go.work
-          cache-dependency-path: octelium-source/client/liboctelium/go.sum
+      - name: Install Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
       - name: Build liboctelium
         env:
-          OCTELIUM_SOURCE_DIR: ${{ github.workspace }}/octelium-source
+          LIBOCTELIUM_SOURCE_DIR: ${{ github.workspace }}/liboctelium-source
         run: ./scripts/build-liboctelium.sh
       - name: Generate the project
         shell: bash

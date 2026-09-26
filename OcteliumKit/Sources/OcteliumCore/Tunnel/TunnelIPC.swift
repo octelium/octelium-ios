@@ -26,60 +26,16 @@ public func decodeTunnelMessage(_ data: Data) -> TunnelMessage? {
     return TunnelMessage(rawValue: ret)
 }
 
-private func appendVarint(_ data: inout Data, _ arg: Int) {
-    var value = UInt64(arg)
-    while value >= 0x80 {
-        data.append(UInt8(value & 0x7f) | 0x80)
-        value >>= 7
-    }
-    data.append(UInt8(value))
+public func encodeLogs(_ logs: [LogEntry]) throws -> Data {
+    try JSONEncoder().encode(Array(logs.suffix(maxTunnelLogs)))
 }
 
-private func readVarint(_ data: Data, _ idx: inout Int) -> Int? {
-    var ret: UInt64 = 0
-    var shift: UInt64 = 0
-
-    while idx < data.endIndex && shift < 64 {
-        let b = data[idx]
-        idx += 1
-
-        ret |= UInt64(b & 0x7f) << shift
-        if b & 0x80 == 0 {
-            return ret <= UInt64(Int.max) ? Int(ret) : nil
-        }
-
-        shift += 7
+public func decodeLogs(_ data: Data) throws -> [LogEntry] {
+    do {
+        return try JSONDecoder().decode([LogEntry].self, from: data)
+    } catch {
+        throw StatusError(.dataLoss, "Invalid log encoding")
     }
-
-    return nil
-}
-
-public func encodeLogs(_ logs: [Mobilev1.Log]) throws -> Data {
-    var ret = Data()
-
-    for itm in logs.suffix(maxTunnelLogs) {
-        let data: Data = try itm.serializedBytes()
-        appendVarint(&ret, data.count)
-        ret.append(data)
-    }
-
-    return ret
-}
-
-public func decodeLogs(_ data: Data) throws -> [Mobilev1.Log] {
-    var ret: [Mobilev1.Log] = []
-    var idx = data.startIndex
-
-    while idx < data.endIndex {
-        guard let size = readVarint(data, &idx), size <= data.endIndex - idx else {
-            throw StatusError(.dataLoss, "Invalid log encoding")
-        }
-
-        ret.append(try Mobilev1.Log(serializedBytes: data[idx..<(idx + size)]))
-        idx += size
-    }
-
-    return ret
 }
 
 public enum TunnelErrorCode: Int, Sendable, CaseIterable {

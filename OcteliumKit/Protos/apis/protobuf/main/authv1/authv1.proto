@@ -1,0 +1,433 @@
+// Copyright Octelium Labs, LLC. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package octelium.api.main.auth.v1;
+
+option go_package = "github.com/octelium/octelium/apis/main/authv1";
+
+import "apis/protobuf/main/metav1/metav1.proto";
+import "google/protobuf/timestamp.proto";
+
+service MainService {
+  rpc AuthenticateWithAuthenticationToken(
+      AuthenticateWithAuthenticationTokenRequest) returns (SessionToken) {}
+  rpc AuthenticateWithAssertion(AuthenticateWithAssertionRequest)
+      returns (SessionToken) {}
+  rpc AuthenticateWithRefreshToken(AuthenticateWithRefreshTokenRequest)
+      returns (SessionToken) {}
+  rpc AuthenticateWithAuthenticator(AuthenticateWithAuthenticatorRequest)
+      returns (octelium.api.main.auth.v1.SessionToken) {}
+
+  rpc Logout(LogoutRequest) returns (LogoutResponse) {}
+
+  rpc RegisterDeviceBegin(RegisterDeviceBeginRequest)
+      returns (RegisterDeviceBeginResponse) {}
+  rpc RegisterDeviceFinish(RegisterDeviceFinishRequest)
+      returns (RegisterDeviceFinishResponse) {}
+
+  rpc GetAuthenticator(octelium.api.main.meta.v1.GetOptions)
+      returns (Authenticator) {}
+  rpc CreateAuthenticator(CreateAuthenticatorRequest) returns (Authenticator) {}
+  rpc UpdateAuthenticator(Authenticator) returns (Authenticator) {}
+  rpc ListAuthenticator(ListAuthenticatorOptions) returns (AuthenticatorList) {}
+  rpc DeleteAuthenticator(octelium.api.main.meta.v1.DeleteOptions)
+      returns (octelium.api.main.meta.v1.OperationResult) {}
+
+  rpc RegisterAuthenticatorBegin(RegisterAuthenticatorBeginRequest)
+      returns (RegisterAuthenticatorBeginResponse) {}
+  rpc RegisterAuthenticatorFinish(RegisterAuthenticatorFinishRequest)
+      returns (RegisterAuthenticatorFinishResponse) {}
+
+  rpc AuthenticateAuthenticatorBegin(AuthenticateAuthenticatorBeginRequest)
+      returns (AuthenticateAuthenticatorBeginResponse) {}
+
+  rpc GetAvailableAuthenticator(GetAvailableAuthenticatorRequest)
+      returns (GetAvailableAuthenticatorResponse) {}
+
+  rpc AuthenticateWithPasskeyBegin(AuthenticateWithPasskeyBeginRequest)
+      returns (AuthenticateWithPasskeyBeginResponse) {}
+  rpc AuthenticateWithPasskey(AuthenticateWithPasskeyRequest)
+      returns (octelium.api.main.auth.v1.SessionToken) {}
+
+  rpc RunDeviceProbeBegin(RunDeviceProbeBeginRequest)
+      returns (RunDeviceProbeBeginResponse) {}
+  rpc RunDeviceProbeFinish(RunDeviceProbeFinishRequest)
+      returns (RunDeviceProbeFinishResponse) {}
+}
+
+message SessionToken {
+  string accessToken = 1;
+  string refreshToken = 2;
+  int64 expiresIn = 3;
+  int64 refreshTokenExpiresIn = 4;
+}
+
+message ClientLoginRequest {
+  enum APIVersion {
+    UNKNOWN_VERSION = 0;
+    V1 = 1;
+    // Clients keep sending V1 until Clusters that reject unknown API versions
+    // have aged out. A V1 request carrying a codeChallenge is normalized to V2
+    // by the Cluster.
+    V2 = 2;
+  }
+
+  enum CallbackType {
+    // LOOPBACK is the loopback HTTP callback of the desktop clients (i.e. the
+    // Octelium CLI and the Octelium daemon). Its URL is derived from
+    // callbackPort and callbackSuffix.
+    LOOPBACK = 0;
+    // APP is the fixed private-use URI scheme callback of the Octelium mobile
+    // applications (i.e. `com.octelium.client:/callback/success`). Both
+    // callbackPort and callbackSuffix must be unset and codeChallenge is
+    // required. Clusters that do not support it reject the request.
+    APP = 1;
+  }
+
+  APIVersion apiVersion = 1;
+  uint32 callbackPort = 2;
+  string callbackSuffix = 3;
+  // CodeChallenge is the SHA256 digest of the 32 random bytes of the code
+  // verifier. This is S256 over the raw verifier bytes, NOT over the base64url
+  // encoding used by RFC 7636.
+  bytes codeChallenge = 4;
+  // CallbackType is the type of the callback to which the Cluster redirects
+  // the ClientLoginResponse. The Cluster derives the callback URL out of it and
+  // it never accepts an arbitrary callback URL from the client.
+  CallbackType callbackType = 5;
+}
+
+message ClientLoginResponse {
+  string authenticationToken = 1;
+  bytes codeChallenge = 2;
+}
+
+message LogoutRequest {}
+message LogoutResponse {}
+
+message RegisterDeviceBeginRequest {
+
+  message Info {
+    enum OSType {
+      OS_TYPE_UNKNOWN = 0;
+      LINUX = 1;
+      WINDOWS = 2;
+      MAC = 3;
+      ANDROID = 4;
+      IOS = 5;
+    }
+
+    OSType osType = 1;
+    string hostname = 2;
+    string id = 3;
+    string serialNumber = 4;
+    repeated string macAddresses = 5;
+  }
+
+  Info info = 1;
+}
+
+message RegisterDeviceBeginResponse {
+  message Request {
+    message Command {
+      string command = 1;
+      repeated string args = 2;
+    }
+
+    message File { string path = 1; }
+
+    string uid = 1;
+    oneof type {
+      Command command = 2;
+      File file = 3;
+    }
+  }
+
+  string uid = 1;
+  repeated Request requests = 2;
+}
+
+message RegisterDeviceFinishRequest {
+  message Response {
+    string uid = 1;
+    message Command { bytes output = 1; }
+    message File { bytes output = 1; }
+
+    oneof type {
+      Command command = 2;
+      File file = 3;
+    }
+  }
+
+  string uid = 1;
+  repeated Response responses = 2;
+}
+
+message RegisterDeviceFinishResponse {}
+
+message AuthenticateWithAuthenticationTokenRequest {
+  string authenticationToken = 1;
+  repeated string scopes = 2;
+  // CodeVerifier is required if and only if the Credential is bound to a code
+  // challenge. Supplying it for a Credential that is not bound is rejected.
+  bytes codeVerifier = 3;
+}
+
+message AuthenticateWithAssertionRequest {
+  octelium.api.main.meta.v1.ObjectReference identityProviderRef = 1;
+  string assertion = 2;
+  repeated string scopes = 3;
+}
+
+message AuthenticateWithRefreshTokenRequest {}
+
+message TokenT0 {
+  message Content {
+    enum Type {
+      TYPE_UNKNOWN = 0;
+      ACCESS_TOKEN = 1;
+      REFRESH_TOKEN = 2;
+      CREDENTIAL = 3;
+    }
+
+    Type type = 1;
+    bytes keyID = 2;
+    bytes subject = 3;
+    bytes tokenID = 4;
+    google.protobuf.Timestamp expiresAt = 5;
+  }
+
+  bytes signature = 1;
+  Content content = 2;
+}
+
+message AuthenticateAuthenticatorBeginRequest {
+  octelium.api.main.meta.v1.ObjectReference authenticatorRef = 1;
+}
+
+message AuthenticateAuthenticatorBeginResponse {
+
+  message ChallengeRequest {
+
+    message FIDO { string request = 1; }
+    message TOTP {}
+    message TPM {
+      message EncryptedCredential {
+        bytes credential = 1;
+        bytes secret = 2;
+      }
+      EncryptedCredential encryptedCredential = 1;
+      bytes akBytes = 2;
+    }
+
+    oneof type {
+      FIDO fido = 1;
+      TOTP totp = 2;
+      TPM tpm = 3;
+    }
+  }
+
+  ChallengeRequest challengeRequest = 1;
+}
+
+message RegisterAuthenticatorBeginRequest {
+  message PreChallenge {
+    message TPM {
+      message AttestationParameters {
+        bytes public = 1;
+        bytes createData = 2;
+        bytes createAttestation = 3;
+        bytes createSignature = 4;
+      }
+
+      bytes akBytes = 1;
+      AttestationParameters attestationParameters = 2;
+      oneof ekType {
+        bytes ekCertificateDER = 3;
+        bytes ekPublicKey = 4;
+      }
+      repeated bytes ekCertificateIntermediatesDER = 5;
+    }
+
+    oneof type { TPM tpm = 1; }
+  }
+
+  octelium.api.main.meta.v1.ObjectReference authenticatorRef = 1;
+  PreChallenge preChallenge = 2;
+}
+
+message RegisterAuthenticatorBeginResponse {
+  message ChallengeRequest {
+
+    message FIDO { string request = 1; }
+    message TOTP { string url = 1; }
+    message TPM {
+      message EncryptedCredential {
+        bytes credential = 1;
+        bytes secret = 2;
+      }
+      EncryptedCredential encryptedCredential = 1;
+      bytes akBytes = 2;
+    }
+
+    oneof type {
+      FIDO fido = 1;
+      TOTP totp = 2;
+      TPM tpm = 3;
+    }
+  }
+
+  ChallengeRequest challengeRequest = 1;
+}
+
+message Authenticator {
+
+  message Spec { string displayName = 1; }
+
+  message Status {
+    enum Type {
+      TYPE_UNKNOWN = 0;
+      FIDO = 1;
+      TOTP = 2;
+      TPM = 3;
+    }
+
+    bool isRegistered = 1;
+    Type type = 2;
+    string description = 3;
+  }
+
+  // APIVersion is the API version of the object.
+  string apiVersion = 1;
+  // Kind is the resource name (i.e. `Group`).
+  string kind = 2;
+  // octelium.api.main.meta.v1.Metadata is the object's metadata.
+  octelium.api.main.meta.v1.Metadata metadata = 3;
+  // Spec is the Group specification.
+  Spec spec = 4;
+  // Status is the current status of the Group.
+  Status status = 5;
+}
+
+message AuthenticatorList {
+  // APIVersion is the API version of the object.
+  string apiVersion = 1;
+  // Kind is the resource name (i.e. `GroupList`).
+  string kind = 2;
+  // Items is the list of Groups.
+  repeated Authenticator items = 3;
+  // ListResponseMeta is common information about the list.
+  octelium.api.main.meta.v1.ListResponseMeta listResponseMeta = 4;
+}
+
+message ListAuthenticatorOptions {
+  // Page is the page number. Starts at 0
+  uint32 page = 1;
+  // ItemsPerPage is the number of items per page
+  uint32 itemsPerPage = 2;
+}
+
+message CreateAuthenticatorRequest {
+
+  Authenticator.Status.Type type = 1;
+  string displayName = 2;
+}
+
+message RegisterAuthenticatorFinishRequest {
+  octelium.api.main.meta.v1.ObjectReference authenticatorRef = 1;
+  ChallengeResponse challengeResponse = 2;
+}
+
+message RegisterAuthenticatorFinishResponse {}
+
+message ChallengeResponse {
+
+  message FIDO { string response = 1; }
+  message TOTP { string response = 1; }
+  message TPM { bytes response = 1; }
+
+  oneof type {
+    FIDO fido = 1;
+    TOTP totp = 2;
+    TPM tpm = 3;
+  }
+}
+
+message AuthenticateWithAuthenticatorRequest {
+  octelium.api.main.meta.v1.ObjectReference authenticatorRef = 1;
+  ChallengeResponse challengeResponse = 2;
+}
+
+message GetAvailableAuthenticatorRequest {}
+message GetAvailableAuthenticatorResponse {
+  Authenticator mainAuthenticator = 1;
+  repeated Authenticator availableAuthenticators = 2;
+}
+
+message AuthenticateWithPasskeyBeginRequest { string query = 1; }
+
+message AuthenticateWithPasskeyBeginResponse { string request = 1; }
+
+message AuthenticateWithPasskeyRequest { string response = 1; }
+
+message RunDeviceProbeBeginRequest {}
+
+message RunDeviceProbeBeginResponse {
+  string attemptUID = 1;
+
+  repeated DeviceProbe probes = 2;
+}
+
+message DeviceProbe {
+  message RunCommand {
+    string command = 1;
+    repeated string args = 2;
+    uint32 timeoutSeconds = 3;
+    uint32 maxOutputBytes = 4;
+  }
+  message ReadFile {
+    string path = 1;
+    uint32 maxBytes = 2;
+  }
+  message ReadRegistry {
+    string key = 1;
+    string name = 2;
+  }
+
+  string probeID = 1;
+  bool requireElevation = 2;
+
+  oneof type {
+    RunCommand runCommand = 3;
+    ReadFile readFile = 4;
+    ReadRegistry readRegistry = 5;
+  }
+}
+
+message DeviceProbeResult {
+  string probeID = 1;
+  oneof type {
+    bytes output = 2;
+    string error = 3;
+  }
+}
+
+message RunDeviceProbeFinishRequest {
+  string attemptUID = 1;
+  repeated DeviceProbeResult results = 2;
+}
+
+message RunDeviceProbeFinishResponse {}

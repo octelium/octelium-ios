@@ -1,0 +1,272 @@
+// Copyright Octelium Labs, LLC. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package octelium.api.client.config.v1;
+
+import "apis/protobuf/main/userv1/userv1.proto";
+import "apis/protobuf/main/authv1/authv1.proto";
+import "apis/protobuf/client/daemonv1/daemonv1.proto";
+
+option go_package = "github.com/octelium/octelium/apis/client/cliconfigv1";
+
+import "google/protobuf/timestamp.proto";
+
+message Connection {
+  message Preferences {
+    message ServeOpts {
+      enum ProxyMode {
+        NONE = 0;
+        USERSPACE = 1;
+        ENVOY_EMBEDDED = 2;
+        ENVOY = 3;
+      }
+
+      bool isEnabled = 1;
+      ProxyMode proxyMode = 2;
+    }
+
+    message Linux {
+      enum DNSMode {
+        NO_DNS = 0;
+        RESOLVECTL_BIN = 1;
+        RESOLVCONF = 2;
+        NETWORKMANAGER = 3;
+        IN_APP = 4;
+      }
+
+      enum ImplementationMode {
+        WG_KERNEL = 0;
+        WG_USERSPACE = 1;
+        WG_NETSTACK = 2;
+      }
+
+      bytes resolvConf = 1;
+      string namespace = 2;
+      int64 mainTableIndex = 3;
+      int64 tableIndex = 4;
+
+      DNSMode dnsMode = 6;
+      ImplementationMode implementationMode = 7;
+      bool enforceImplementationMode = 8;
+    }
+
+    message Windows {}
+
+    message MacOS {
+      enum DNSMode {
+        RESOLVCONF = 0;
+        NETWORKSETUP = 1;
+        IN_APP = 2;
+        SCUTIL = 3;
+      }
+
+      message NetworkSetupConfig {
+        message Service {
+          string name = 1;
+          repeated string dnsServers = 2;
+          repeated string dnsDomains = 3;
+        }
+
+        repeated Service services = 1;
+      }
+
+      bytes resolvConf = 1;
+      DNSMode dnsMode = 2;
+      NetworkSetupConfig networkSetupConfig = 3;
+    }
+
+    enum L3Mode {
+      BOTH = 0;
+      V4 = 1;
+      V6 = 2;
+    }
+
+    enum RuntimeMode {
+      MACHINE = 0;
+      CONTAINER = 1;
+      IN_APP = 2;
+    }
+    message PublishedService {
+      enum L4Type {
+        UNKNOWN = 0;
+        TCP = 1;
+        UDP = 2;
+      }
+
+      string name = 1;
+      string namespace = 2;
+      string fqdn = 3;
+      int32 port = 4;
+      int32 hostPort = 5;
+      L4Type l4Type = 6;
+      string hostAddress = 7;
+    }
+
+    enum ConnectionType {
+      CONNECTION_TYPE_UNSET = 0;
+      CONNECTION_TYPE_WG = 1;
+      CONNECTION_TYPE_QUICV0 = 2;
+    }
+
+    message ESSH {
+      bool isEnabled = 1;
+      string user = 2;
+      int32 port = 3;
+      repeated string listenIPAddresses = 4;
+    }
+
+    message LocalDNS {
+      bool isEnabled = 1;
+      string listenAddress = 2;
+    }
+
+    message ESOCKS5 {
+      bool isEnabled = 1;
+      repeated string listenIPAddresses = 2;
+      int32 port = 3;
+    }
+
+    string deviceName = 1;
+    Linux linuxPrefs = 2;
+    L3Mode l3Mode = 3;
+    Windows windowsPrefs = 4;
+    MacOS macosPrefs = 5;
+    bool ignoreDNS = 6;
+    int32 keepAliveSeconds = 7;
+    bool enforcel3Mode = 8;
+    int32 mtu = 9;
+    ServeOpts serveOpts = 10;
+    RuntimeMode runtimeMode = 11;
+    repeated PublishedService publishedServices = 12;
+    ConnectionType connectionType = 13;
+    ESSH eSSH = 14;
+    LocalDNS localDNS = 15;
+    ESOCKS5 eSOCKS5 = 16;
+    bool fullDNS = 17;
+
+    // UserHome is the home directory of the OS user that owns the Connection.
+    // It is set by the Octelium daemon which runs as a privileged OS user on
+    // behalf of its owner. An empty value lets the host configuration be
+    // resolved out of the environment of the process itself.
+    string userHome = 18;
+  }
+
+  message Info {
+    message Cluster { string domain = 1; }
+
+    Cluster cluster = 1;
+  }
+
+  google.protobuf.Timestamp createdAt = 1;
+  octelium.api.main.user.v1.ConnectionState connection = 2;
+  Preferences preferences = 3;
+  Info info = 4;
+}
+
+message ConnectionCleanup {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    PREPARED = 1;
+    ACTIVE = 2;
+    CLEANING = 3;
+  }
+
+  message Device {
+    enum Type {
+      TYPE_UNSPECIFIED = 0;
+      LINUX_WIREGUARD = 1;
+      TUN = 2;
+      WINDOWS_WIREGUARD = 3;
+      WINDOWS_WINTUN = 4;
+      NETSTACK = 5;
+    }
+
+    Type type = 1;
+    string name = 2;
+    string guid = 3;
+  }
+
+  message DNS {
+    message ResolvConf {
+      string path = 1;
+      bool existed = 2;
+      bool isSymlink = 3;
+      string linkTarget = 4;
+      uint32 mode = 5;
+      bytes content = 6;
+      bytes installedHash = 7;
+    }
+
+    message SystemdResolved {
+      string deviceName = 1;
+      bool isResolvectl = 2;
+    }
+
+    message MacOS {
+      message Service {
+        string name = 1;
+        repeated string dnsServers = 2;
+        repeated string dnsDomains = 3;
+        repeated string installedDNSServers = 4;
+        repeated string installedDNSDomains = 5;
+      }
+
+      string scutilKey = 1;
+      repeated Service services = 2;
+    }
+
+    message Windows {
+      string nrptRulePath = 1;
+      string nrptMarker = 2;
+      string adapterName = 3;
+      string adapterGUID = 4;
+    }
+
+    oneof config {
+      ResolvConf resolvConf = 1;
+      SystemdResolved systemdResolved = 2;
+      MacOS macos = 3;
+      Windows windows = 4;
+    }
+  }
+
+  message SSH {
+    string marker = 1;
+    repeated string filePaths = 2;
+  }
+
+  string id = 1;
+  google.protobuf.Timestamp createdAt = 2;
+  Phase phase = 3;
+  Device device = 4;
+  DNS dns = 5;
+  SSH ssh = 6;
+  map<string, string> metadata = 20;
+  map<string, bytes> opaqueData = 21;
+}
+
+message State {
+  message Domain {
+    octelium.api.main.auth.v1.SessionToken sessionToken = 1;
+    google.protobuf.Timestamp sessionTokenSetAt = 2;
+    // Settings is the locally persisted preferences of the domain which are
+    // managed by the Octelium daemon.
+    octelium.api.client.daemon.v1.DomainSettings settings = 3;
+    ConnectionCleanup connectionCleanup = 4;
+  }
+
+  map<string, Domain> domainMap = 1;
+}

@@ -40,13 +40,11 @@ struct WebAuthenticationProvider: ViewModifier {
             return
         }
 
-        guard let scheme = model.authCallbackScheme else {
-            model.setAuthCallbackError("liboctelium does not provide an authentication callback URL")
-            return
-        }
-
         do {
-            let callbackURL = try await webAuthenticationSession.authenticate(using: loginURL, callbackURLScheme: scheme)
+            let callbackURL = try await webAuthenticationSession.authenticate(
+                using: loginURL,
+                callbackURLScheme: authCallbackScheme
+            )
             model.handleAuthCallback(callbackURL)
         } catch let err as ASWebAuthenticationSessionError where err.code == .canceledLogin {
             await model.cancelAuthentication(domain)

@@ -1,6 +1,5 @@
 import Foundation
 import OcteliumProto
-import SwiftProtobuf
 import Synchronization
 import XCTest
 
@@ -15,17 +14,8 @@ final class EventsTests: XCTestCase {
         return ret
     }
 
-    private func getLog(_ msg: String, level: Mobilev1.Log.Level = .info) -> Mobilev1.Log {
-        var ret = Mobilev1.Log()
-        ret.level = level
-        ret.message = msg
-        return ret
-    }
-
-    private func getEvent(_ type: Mobilev1.Event.OneOf_Type?) throws -> Data {
-        var ret = Mobilev1.Event()
-        ret.type = type
-        return try ret.serializedBytes()
+    private func getLog(_ msg: String, level: LogLevel = .info) -> LogEntry {
+        LogEntry(level: level, createdAt: Date(timeIntervalSince1970: 1790157723), message: msg)
     }
 
     func testShouldReplaceStatus() {
@@ -74,47 +64,30 @@ final class EventsTests: XCTestCase {
         XCTAssertTrue(s.logs.isEmpty)
     }
 
-    func testEventHandler() throws {
-        let statusStore = StatusStore()
-        let logStore = LogStore()
-        let received = Mutex<[String]>([])
-        let h = EventHandler(statusStore: statusStore, logStore: logStore) { log in
-            received.withLock { $0.append(log.message) }
+    func testLogWriter() {
+        let received = Mutex<[LogEntry]>([])
+        let w = LogWriter(level: .info) { log in
+            received.withLock { $0.append(log) }
         }
 
-        do {
-            h.handle(try getEvent(.status(getStatus("a", 7))))
-            XCTAssertEqual(7, statusStore.status?.revision)
-        }
+        w.debug("debug")
+        w.info("info")
+        w.warn("warn")
+        w.error("error")
+        w.log(getLog("entry", level: .debug))
+        w.log(getLog("entry", level: .error))
 
-        do {
-            h.handle(try getEvent(.log(getLog("hello"))))
-            XCTAssertEqual(["hello"], logStore.logs.map(\.message))
-            XCTAssertEqual(["hello"], received.withLock { $0 })
-        }
-
-        do {
-            h.handle(Data([0xff, 0x01]))
-            h.handle(try getEvent(nil))
-            XCTAssertEqual(7, statusStore.status?.revision)
-            XCTAssertEqual(1, logStore.logs.count)
-        }
+        XCTAssertEqual(["info", "warn", "error", "entry"], received.withLock { $0.map(\.message) })
+        XCTAssertEqual([.info, .warn, .error, .error], received.withLock { $0.map(\.level) })
+        XCTAssertTrue(LogLevel.debug < LogLevel.info && LogLevel.warn < LogLevel.error)
     }
 
     func testFormatLog() {
         let utc = TimeZone(identifier: "UTC")!
 
-        do {
-            var log = getLog("Could not rebind", level: .warn)
-            log.createdAt = Google_Protobuf_Timestamp(seconds: 1790157723, nanos: 0)
-            XCTAssertEqual("10:02:03 WARN  Could not rebind", formatLog(log, timeZone: utc))
-        }
-        do {
-            XCTAssertEqual("--:--:-- ERROR failed", formatLog(getLog("failed", level: .error), timeZone: utc))
-        }
-        do {
-            XCTAssertEqual("--:--:-- DEBUG x", formatLog(getLog("x", level: .debug), timeZone: utc))
-            XCTAssertEqual("--:--:-- LEVEL_UNSPECIFIED x", formatLog(getLog("x", level: .unspecified), timeZone: utc))
-        }
+        XCTAssertEqual("10:02:03 WARN  Could not rebind", formatLog(getLog("Could not rebind", level: .warn), timeZone: utc))
+        XCTAssertEqual("10:02:03 ERROR failed", formatLog(getLog("failed", level: .error), timeZone: utc))
+        XCTAssertEqual("10:02:03 DEBUG x", formatLog(getLog("x", level: .debug), timeZone: utc))
+        XCTAssertEqual("10:02:03 INFO  x", formatLog(getLog("x"), timeZone: utc))
     }
 }

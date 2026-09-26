@@ -4,6 +4,12 @@ import PackageDescription
 
 let swiftProtobuf: Target.Dependency = .product(name: "SwiftProtobuf", package: "swift-protobuf")
 
+let crypto: Target.Dependency = .product(
+    name: "Crypto",
+    package: "swift-crypto",
+    condition: .when(platforms: [.linux])
+)
+
 let targets: [Target] = [
     .target(
         name: "OcteliumProto",
@@ -11,13 +17,14 @@ let targets: [Target] = [
     ),
     .target(
         name: "OcteliumCore",
-        dependencies: ["OcteliumProto", swiftProtobuf]
+        dependencies: ["OcteliumProto", swiftProtobuf, crypto]
     ),
     .target(
         name: "OcteliumAPI",
         dependencies: [
             "OcteliumProto",
             "OcteliumCore",
+            swiftProtobuf,
             .product(name: "GRPCCore", package: "grpc-swift-2"),
             .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf"),
             .product(
@@ -39,7 +46,8 @@ let targets: [Target] = [
     ),
     .testTarget(
         name: "OcteliumCoreTests",
-        dependencies: ["OcteliumCore", "OcteliumProto", swiftProtobuf]
+        dependencies: ["OcteliumCore", "OcteliumProto", swiftProtobuf, crypto],
+        resources: [.copy("Resources")]
     ),
     .testTarget(
         name: "OcteliumAPITests",
@@ -47,7 +55,10 @@ let targets: [Target] = [
             "OcteliumAPI",
             "OcteliumCore",
             "OcteliumProto",
+            swiftProtobuf,
+            crypto,
             .product(name: "GRPCCore", package: "grpc-swift-2"),
+            .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf"),
             .product(name: "GRPCInProcessTransport", package: "grpc-swift-2"),
         ]
     ),
@@ -67,6 +78,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.1"),
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "5.0.0"),
         .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.4.3"),
         .package(url: "https://github.com/grpc/grpc-swift-nio-transport.git", from: "2.10.0"),
         .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.4.1"),

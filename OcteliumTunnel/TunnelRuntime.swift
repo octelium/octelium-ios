@@ -1,6 +1,7 @@
 import Foundation
 import LibOctelium
 import NetworkExtension
+import OcteliumAPI
 import OcteliumCore
 import OcteliumProto
 
@@ -12,8 +13,7 @@ actor TunnelRuntime {
     private let domain: String
     private let logStore = LogStore(capacity: maxTunnelLogs)
 
-    private var lib: LibOctelium?
-    private var client: LocalClient?
+    private var client: OcteliumClient?
     private var status: Daemonv1.GetStatusResponse?
     private var pathMonitor: PathMonitor?
     private var networkReporter: NetworkStateReporter?
@@ -74,22 +74,9 @@ actor TunnelRuntime {
         }
     }
 
-    nonisolated func onEvent(_ data: Data) {
-        guard let ev = try? Mobilev1.Event(serializedBytes: data) else {
-            return
-        }
-
-        switch ev.type {
-        case .log(let log):
-            logStore.add(log)
-            writeLibLog(log)
-        case .status(let arg):
-            Task {
-                await self.handleStatus(arg)
-            }
-        case nil:
-            break
-        }
+    nonisolated func onLog(_ log: LogEntry) {
+        logStore.add(log)
+        writeClientLog(log)
     }
 
     private func doStart() async throws {
@@ -97,7 +84,7 @@ actor TunnelRuntime {
         let store = AppGroup.getSecretStore()
         let stateKey = try StateKeyStore(store: store, stateDir: stateDir).get()
 
-        guard let deviceID = try InstallationID(store: store).get() else {
+        guard let installationID = try InstallationID(store: store).get() else {
             throw getTunnelError(
                 .stateUnavailable,
                 "The installation ID of this device does not exist. Open Octelium in order to set it up"
@@ -108,43 +95,35 @@ actor TunnelRuntime {
             throw getTunnelError(.internalError, "The packet tunnel provider is not available")
         }
 
-        let callbacks = RuntimeCallbacks { [weak self] data in
-            self?.onEvent(data)
-        }
+        try LibOctelium.checkABI()
 
-        let cfg = getLibConfig(
+        let logLevel = getDefaultLogLevel()
+
+        let client = try newClient(
             stateDir: stateDir,
             stateKey: stateKey,
-            deviceID: deviceID,
+            installationID: installationID,
             deviceName: AppGroup.defaults.string(forKey: AppGroup.deviceNameKey) ?? "iPhone",
-            logLevel: getDefaultLogLevel()
-        )
-
-        let lib = try LibOctelium.create(cfg, callbacks)
-        callbacks.setRequestHandler(
-            PlatformRequestHandler(host: TunnelSettingsHost(provider: provider), completer: lib, domain: domain)
+            tunnels: { try LibOctelium.create($0, logLevel: logLevel) },
+            host: TunnelSettingsHost(provider: provider),
+            onStatus: { [weak self] arg in
+                Task {
+                    await self?.handleStatus(arg)
+                }
+            },
+            onLog: { [weak self] log in
+                self?.onLog(log)
+            }
         )
 
         if isShutdown {
-            await closeLib(lib)
+            await client.close()
             return
         }
 
-        self.lib = lib
-
-        let client = LocalClient(lib)
         self.client = client
 
-        let info = try await client.getInfo()
-        if let msg = checkInfo(info) {
-            throw getTunnelError(.libraryUnavailable, msg)
-        }
-
-        Log.tunnel.info("Starting liboctelium \(info.version, privacy: .public)")
-
-        if isShutdown {
-            return
-        }
+        Log.tunnel.info("Starting liboctelium \(LibOctelium.getVersion(), privacy: .public)")
 
         startTimeout()
         await startPathMonitor(client)
@@ -169,6 +148,8 @@ actor TunnelRuntime {
         switch err {
         case let err as StateKeyUnavailableError:
             return getTunnelError(.stateUnavailable, err.message)
+        case let err as DBError:
+            return getTunnelError(.stateUnavailable, err.message)
         case let err as LibraryUnavailableError:
             return getTunnelError(.libraryUnavailable, err.message)
         case let err as StatusError:
@@ -187,15 +168,10 @@ actor TunnelRuntime {
         }
     }
 
-    private func startPathMonitor(_ client: LocalClient) async {
+    private func startPathMonitor(_ client: OcteliumClient) async {
         let reporter = NetworkStateReporter { state in
-            do {
-                _ = try await client.setNetworkState(state)
-                return true
-            } catch {
-                Log.tunnel.warning("Could not set the network state: \(getErrorMessage(error), privacy: .public)")
-                return false
-            }
+            await client.setNetworkState(state)
+            return true
         }
         networkReporter = reporter
 
@@ -319,7 +295,7 @@ actor TunnelRuntime {
         networkTask = nil
         networkReporter = nil
 
-        guard let lib, let client else {
+        guard let client else {
             return
         }
 
@@ -333,9 +309,8 @@ actor TunnelRuntime {
         }
 
         self.client = nil
-        self.lib = nil
 
-        await closeLib(lib)
+        await client.close()
     }
 
     private func waitForDisconnected() async {

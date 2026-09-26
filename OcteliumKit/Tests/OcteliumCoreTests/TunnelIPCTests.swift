@@ -6,11 +6,8 @@ import XCTest
 
 final class TunnelIPCTests: XCTestCase {
 
-    private func getLog(_ msg: String) -> Mobilev1.Log {
-        var ret = Mobilev1.Log()
-        ret.level = .info
-        ret.message = msg
-        return ret
+    private func getLog(_ msg: String) -> LogEntry {
+        LogEntry(level: .info, createdAt: Date(timeIntervalSince1970: 1790157723.5), message: msg)
     }
 
     func testTunnelMessage() {
@@ -51,7 +48,7 @@ final class TunnelIPCTests: XCTestCase {
             let data = try encodeLogs([getLog("hello")])
             XCTAssertThrowsError(try decodeLogs(data.prefix(data.count - 1)))
             XCTAssertThrowsError(try decodeLogs(Data([0xff, 0xff])))
-            XCTAssertEqual(["hello"], try decodeLogs(Data([0]) + data).map(\.message).filter { !$0.isEmpty })
+            XCTAssertThrowsError(try decodeLogs(Data()))
         }
     }
 

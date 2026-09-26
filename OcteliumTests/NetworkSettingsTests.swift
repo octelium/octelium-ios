@@ -1,6 +1,5 @@
 import NetworkExtension
 import OcteliumCore
-import OcteliumProto
 import XCTest
 
 final class NetworkSettingsTests: XCTestCase {
@@ -8,23 +7,26 @@ final class NetworkSettingsTests: XCTestCase {
     private func getSpec(
         addresses: [String],
         routes: [String] = [],
-        mtu: Int32 = 0,
+        mtu: Int = 0,
         dnsServers: [String]? = nil,
         searchDomains: [String] = [],
         matchDomains: [String] = [],
         matchAllDomains: Bool = false
     ) throws -> TunnelSpec {
-        var cfg = Mobilev1.TunnelConfiguration()
-        cfg.addresses = addresses
-        cfg.routes = routes
-        cfg.mtu = mtu
-
-        if let dnsServers {
-            cfg.dns.servers = dnsServers
-            cfg.dns.searchDomains = searchDomains
-            cfg.dns.matchDomains = matchDomains
-            cfg.dns.matchAllDomains = matchAllDomains
-        }
+        let cfg = NetworkConfig(
+            generation: 1,
+            addresses: addresses,
+            routes: routes,
+            dns: dnsServers.map {
+                DNSConfig(
+                    servers: $0,
+                    searchDomains: searchDomains,
+                    matchDomains: matchDomains,
+                    matchAllDomains: matchAllDomains
+                )
+            },
+            mtu: mtu
+        )
 
         return try getTunnelSpec(cfg)
     }

@@ -43,10 +43,69 @@ public func shouldReplaceStatus(_ cur: Daemonv1.GetStatusResponse?, _ next: Daem
     return next.revision >= cur.revision
 }
 
+public enum LogLevel: Int, Codable, Comparable, CaseIterable, Sendable {
+    case debug = 1
+    case info = 2
+    case warn = 3
+    case error = 4
+
+    public static func < (lhs: LogLevel, rhs: LogLevel) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+public struct LogEntry: Codable, Equatable, Sendable {
+    public let level: LogLevel
+    public let createdAt: Date
+    public let message: String
+
+    public init(level: LogLevel, createdAt: Date = Date(), message: String) {
+        self.level = level
+        self.createdAt = createdAt
+        self.message = message
+    }
+}
+
+public struct LogWriter: Sendable {
+    private let level: LogLevel
+    private let sink: @Sendable (LogEntry) -> Void
+
+    public init(level: LogLevel = .info, sink: @escaping @Sendable (LogEntry) -> Void = { _ in }) {
+        self.level = level
+        self.sink = sink
+    }
+
+    public func debug(_ message: String) {
+        log(.debug, message)
+    }
+
+    public func info(_ message: String) {
+        log(.info, message)
+    }
+
+    public func warn(_ message: String) {
+        log(.warn, message)
+    }
+
+    public func error(_ message: String) {
+        log(.error, message)
+    }
+
+    public func log(_ level: LogLevel, _ message: String) {
+        log(LogEntry(level: level, message: message))
+    }
+
+    public func log(_ entry: LogEntry) {
+        if entry.level >= level {
+            sink(entry)
+        }
+    }
+}
+
 public let defaultLogCapacity = 500
 
 public final class LogStore: Sendable {
-    private let buffer = Mutex<[Mobilev1.Log]>([])
+    private let buffer = Mutex<[LogEntry]>([])
     private let capacity: Int
     private let onChange: @Sendable () -> Void
 
@@ -55,11 +114,11 @@ public final class LogStore: Sendable {
         self.onChange = onChange
     }
 
-    public var logs: [Mobilev1.Log] {
+    public var logs: [LogEntry] {
         buffer.withLock { $0 }
     }
 
-    public func add(_ log: Mobilev1.Log) {
+    public func add(_ log: LogEntry) {
         buffer.withLock { itms in
             itms.append(log)
             if itms.count > capacity {
@@ -76,58 +135,20 @@ public final class LogStore: Sendable {
     }
 }
 
-public struct EventHandler: Sendable {
-    private let statusStore: StatusStore
-    private let logStore: LogStore
-    private let onLog: @Sendable (Mobilev1.Log) -> Void
-
-    public init(
-        statusStore: StatusStore,
-        logStore: LogStore,
-        onLog: @escaping @Sendable (Mobilev1.Log) -> Void = { _ in }
-    ) {
-        self.statusStore = statusStore
-        self.logStore = logStore
-        self.onLog = onLog
-    }
-
-    public func handle(_ data: Data) {
-        guard let ev = try? Mobilev1.Event(serializedBytes: data) else {
-            return
-        }
-
-        switch ev.type {
-        case .status(let arg):
-            statusStore.update(arg)
-        case .log(let arg):
-            logStore.add(arg)
-            onLog(arg)
-        case nil:
-            break
-        }
-    }
-}
-
-public func getLogLevelName(_ arg: Mobilev1.Log.Level) -> String {
+public func getLogLevelName(_ arg: LogLevel) -> String {
     switch arg {
     case .debug: "DEBUG"
     case .info: "INFO"
     case .warn: "WARN"
     case .error: "ERROR"
-    default: "LEVEL_UNSPECIFIED"
     }
 }
 
-public func formatLog(_ arg: Mobilev1.Log, timeZone: TimeZone = .current) -> String {
-    let at: String
-    if arg.hasCreatedAt {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let c = calendar.dateComponents([.hour, .minute, .second], from: arg.createdAt.date)
-        at = String(format: "%02d:%02d:%02d", c.hour ?? 0, c.minute ?? 0, c.second ?? 0)
-    } else {
-        at = "--:--:--"
-    }
+public func formatLog(_ arg: LogEntry, timeZone: TimeZone = .current) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+    let c = calendar.dateComponents([.hour, .minute, .second], from: arg.createdAt)
+    let at = String(format: "%02d:%02d:%02d", c.hour ?? 0, c.minute ?? 0, c.second ?? 0)
 
     let level = getLogLevelName(arg.level)
     let padded = level.count >= 5 ? level : level + String(repeating: " ", count: 5 - level.count)

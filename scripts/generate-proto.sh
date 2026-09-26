@@ -11,12 +11,14 @@ PROTOC="${PROTOC:-protoc}"
 
 PROTOS=(
   "apis/protobuf/main/metav1/metav1.proto"
+  "apis/protobuf/main/authv1/authv1.proto"
   "apis/protobuf/main/userv1/userv1.proto"
   "apis/protobuf/client/daemonv1/daemonv1.proto"
-  "apis/protobuf/client/mobilev1/mobilev1.proto"
+  "apis/protobuf/client/configv1/configv1.proto"
 )
 
 GRPC_PROTOS=(
+  "apis/protobuf/main/authv1/authv1.proto"
   "apis/protobuf/main/userv1/userv1.proto"
 )
 

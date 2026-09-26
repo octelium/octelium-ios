@@ -13,6 +13,12 @@ enum RuntimeState: Equatable {
     case failed(message: String, isResettable: Bool)
 }
 
+struct RuntimeInfo: Equatable {
+    let version: String
+    let abiVersion: UInt32
+    let instanceID: String
+}
+
 struct StateOpenError: Error, LocalizedError {
     let message: String
 
@@ -24,19 +30,19 @@ struct StateOpenError: Error, LocalizedError {
 let tunnelReleaseTimeout: Duration = .seconds(10)
 
 private final class ClientHolder: Sendable {
-    private let state = Mutex<LocalClient?>(nil)
+    private let state = Mutex<(any LocalClient)?>(nil)
 
-    var client: LocalClient? {
+    var client: (any LocalClient)? {
         state.withLock { $0 }
     }
 
-    func set(_ arg: LocalClient?) {
+    func set(_ arg: (any LocalClient)?) {
         state.withLock { $0 = arg }
     }
 
     func getCredential(_ domain: String) async throws -> Daemonv1.GetAPICredentialResponse {
         guard let client else {
-            throw StatusError(.unavailable, "liboctelium is not available")
+            throw StatusError(.unavailable, "The Octelium client is not available")
         }
 
         return try await client.getAPICredential(domain)
@@ -47,10 +53,10 @@ private final class ClientHolder: Sendable {
 @Observable
 final class AppModel {
     private(set) var runtimeState: RuntimeState = .loading
-    private(set) var info: Mobilev1.GetInfoResponse?
+    private(set) var info: RuntimeInfo?
     private(set) var appStatus: Daemonv1.GetStatusResponse?
     private(set) var tunnel = TunnelSnapshot()
-    private(set) var logs: [Mobilev1.Log] = []
+    private(set) var logs: [LogEntry] = []
     private(set) var prefs: Prefs
     private(set) var selectedDomain: String?
     private(set) var networkInfo: NetworkInfo?
@@ -70,17 +76,13 @@ final class AppModel {
         return !getNetworkState(networkInfo).isAvailable
     }
 
-    var authCallbackScheme: String? {
-        info.flatMap { parseURI($0.authenticationCallbackURL)?.scheme }
-    }
-
     @ObservationIgnored let cluster: ClusterClient
 
     @ObservationIgnored private let holder: ClientHolder
     @ObservationIgnored private let prefsStore = PrefsStore()
     @ObservationIgnored private let vpn: VPNController
     @ObservationIgnored private let pathMonitor = PathMonitor()
-    @ObservationIgnored private var lib: LibOctelium?
+    @ObservationIgnored private var client: OcteliumClient?
     @ObservationIgnored private var statusStore: StatusStore?
     @ObservationIgnored private var logStore: LogStore?
     @ObservationIgnored private var pendingOperationID: String?
@@ -220,49 +222,43 @@ final class AppModel {
             }
         }
 
-        let handler = EventHandler(statusStore: statusStore, logStore: logStore) { writeLibLog($0) }
-        let callbacks = RuntimeCallbacks { data in
-            handler.handle(data)
-        }
-
         self.statusStore = statusStore
         self.logStore = logStore
 
         let deviceName = getAppDeviceName()
 
-        let lib: LibOctelium
+        let client: OcteliumClient
         do {
-            lib = try await Task.detached(priority: .userInitiated) {
-                try createLib(deviceName: deviceName, callbacks: callbacks)
+            client = try await Task.detached(priority: .userInitiated) {
+                try createClient(
+                    deviceName: deviceName,
+                    onStatus: { statusStore.update($0) },
+                    onLog: { log in
+                        logStore.add(log)
+                        writeClientLog(log)
+                    }
+                )
             }.value
         } catch {
             failRuntime(error)
             return
         }
 
-        callbacks.setRequestHandler(PlatformRequestHandler(host: UnsupportedTunnelHost(), completer: lib))
-
-        let client = LocalClient(lib)
-
         do {
-            let info = try await client.getInfo()
-            if let msg = checkInfo(info) {
-                await closeLib(lib)
-                clearRuntime()
-                runtimeState = .failed(message: msg, isResettable: false)
-                return
-            }
-
             let status = try await client.getStatus()
 
-            self.lib = lib
-            self.info = info
+            self.client = client
+            self.info = RuntimeInfo(
+                version: LibOctelium.getVersion(),
+                abiVersion: LibOctelium.getABIVersion(),
+                instanceID: client.instanceID
+            )
             holder.set(client)
             networkReporter = getNetworkReporter(client)
             statusStore.update(status)
             onAppStatusChange()
         } catch {
-            await closeLib(lib)
+            await client.close()
             failRuntime(error)
             return
         }
@@ -289,7 +285,7 @@ final class AppModel {
         case let err as StateOpenError:
             runtimeState = .failed(message: err.message, isResettable: true)
         default:
-            Log.app.error("Could not start liboctelium: \(getErrorMessage(err), privacy: .public)")
+            Log.app.error("Could not start the Octelium client: \(getErrorMessage(err), privacy: .public)")
             runtimeState = .failed(message: getErrorMessage(err), isResettable: false)
         }
     }
@@ -298,9 +294,9 @@ final class AppModel {
         holder.set(nil)
         networkReporter = nil
 
-        if let lib {
-            self.lib = nil
-            await closeLib(lib)
+        if let client {
+            self.client = nil
+            await client.close()
         }
 
         clearRuntime()
@@ -315,15 +311,10 @@ final class AppModel {
         sessionKeys = [:]
     }
 
-    private func getNetworkReporter(_ client: LocalClient) -> NetworkStateReporter {
+    private func getNetworkReporter(_ client: any LocalClient) -> NetworkStateReporter {
         NetworkStateReporter { state in
-            do {
-                _ = try await client.setNetworkState(state)
-                return true
-            } catch {
-                Log.app.warning("Could not set the network state: \(getErrorMessage(error), privacy: .public)")
-                return false
-            }
+            await client.setNetworkState(state)
+            return true
         }
     }
 
@@ -336,9 +327,9 @@ final class AppModel {
         getDeviceName(name: UIDevice.current.name, model: UIDevice.current.model, machine: getDeviceModel())
     }
 
-    private func getClient() throws -> LocalClient {
+    private func getClient() throws -> any LocalClient {
         guard let ret = holder.client else {
-            throw StatusError(.unavailable, "liboctelium is not available")
+            throw StatusError(.unavailable, "The Octelium client is not available")
         }
 
         return ret
@@ -413,7 +404,7 @@ final class AppModel {
         onAppStatusChange()
     }
 
-    func fetchTunnelLogs() async -> [Mobilev1.Log] {
+    func fetchTunnelLogs() async -> [LogEntry] {
         guard let data = await vpn.sendMessage(.getLogs) else {
             return []
         }
@@ -482,11 +473,7 @@ final class AppModel {
     }
 
     func isCallbackURL(_ url: String) -> Bool {
-        guard let info else {
-            return false
-        }
-
-        return isAuthCallbackURL(url, info.authenticationCallbackURL)
+        isAuthCallbackURL(url, authCallbackURL)
     }
 
     func completeAuthentication(_ url: String) async throws -> Daemonv1.Operation {
@@ -716,24 +703,25 @@ final class AppModel {
     }
 }
 
-private func createLib(deviceName: String, callbacks: RuntimeCallbacks) throws -> LibOctelium {
+private func createClient(
+    deviceName: String,
+    onStatus: @escaping @Sendable (Daemonv1.GetStatusResponse) -> Void,
+    onLog: @escaping @Sendable (LogEntry) -> Void
+) throws -> OcteliumClient {
     let stateDir = try AppGroup.getStateDir()
     let store = AppGroup.getSecretStore()
     let stateKey = try StateKeyStore(store: store, stateDir: stateDir).getOrCreate()
-    let deviceID = try InstallationID(store: store).getOrCreate()
-
-    let cfg = getLibConfig(
-        stateDir: stateDir,
-        stateKey: stateKey,
-        deviceID: deviceID,
-        deviceName: deviceName,
-        logLevel: getDefaultLogLevel()
-    )
+    let installationID = try InstallationID(store: store).getOrCreate()
 
     do {
-        return try LibOctelium.create(cfg, callbacks)
-    } catch let err as LibraryUnavailableError {
-        throw err
+        return try newClient(
+            stateDir: stateDir,
+            stateKey: stateKey,
+            installationID: installationID,
+            deviceName: deviceName,
+            onStatus: onStatus,
+            onLog: onLog
+        )
     } catch {
         throw StateOpenError(message: "Could not open the local Octelium state: \(getErrorMessage(error))")
     }

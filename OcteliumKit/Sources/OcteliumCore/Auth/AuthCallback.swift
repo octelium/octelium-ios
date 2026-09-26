@@ -3,6 +3,10 @@ import OcteliumProto
 
 public let maxCallbackURLLength = 16 * 1024
 
+public let authCallbackScheme = "com.octelium.client"
+public let authCallbackPath = "/callback/success"
+public let authCallbackURL = "\(authCallbackScheme):\(authCallbackPath)"
+
 public struct ParsedURI: Equatable, Sendable {
     public let scheme: String
     public let authority: String?

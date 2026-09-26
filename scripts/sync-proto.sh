@@ -8,12 +8,13 @@ OUT_DIR="${ROOT}/OcteliumKit/Protos"
 
 PROTOS=(
   "apis/protobuf/main/metav1/metav1.proto"
+  "apis/protobuf/main/authv1/authv1.proto"
   "apis/protobuf/main/userv1/userv1.proto"
   "apis/protobuf/client/daemonv1/daemonv1.proto"
-  "apis/protobuf/client/mobilev1/mobilev1.proto"
+  "apis/protobuf/client/configv1/configv1.proto"
 )
 
-if [ ! -f "${PB_DIR}/apis/protobuf/client/mobilev1/mobilev1.proto" ]; then
+if [ ! -f "${PB_DIR}/apis/protobuf/client/daemonv1/daemonv1.proto" ]; then
   echo "Could not find the Octelium protobuf APIs at ${PB_DIR}" >&2
   echo "Set OCTELIUM_PB_DIR to the root of the protobuf APIs repository" >&2
   exit 1

@@ -47,7 +47,7 @@ struct DiagnosticsView: View {
     @Environment(\.octColors) private var colors
 
     @State private var source = LogSource.app
-    @State private var tunnelLogs: [Mobilev1.Log] = []
+    @State private var tunnelLogs: [LogEntry] = []
 
     var body: some View {
         let info = model.info
@@ -70,10 +70,7 @@ struct DiagnosticsView: View {
 
                     InfoGrid(items: [
                         InfoGridItem("Version") { InfoText(text: getLibVersion(info?.version)) },
-                        InfoGridItem("Local API") {
-                            InfoText(text: info.map { "v\($0.apiMajorVersion).\($0.apiMinorVersion)" } ?? "—")
-                        },
-                        InfoGridItem("C ABI") { InfoText(text: "v\(abiVersion)") },
+                        InfoGridItem("C ABI") { InfoText(text: info.map { "v\(formatABIVersion($0.abiVersion))" } ?? "—") },
                         InfoGridItem("State revision") { InfoText(text: model.appStatus.map { String($0.revision) } ?? "—") },
                         InfoGridItem("Instance") { Mono(text: info.map { String($0.instanceID.prefix(12)) } ?? "—") },
                         InfoGridItem("Commit") { Mono(text: libCommit.isEmpty ? "—" : String(libCommit.prefix(12))) },
@@ -175,13 +172,11 @@ struct DiagnosticsView: View {
                     }
                 }
 
-                if let info {
-                    SectionCard {
-                        SectionTitle(text: "Authentication callback")
-                            .padding(.bottom, 8)
+                SectionCard {
+                    SectionTitle(text: "Authentication callback")
+                        .padding(.bottom, 8)
 
-                        CopyText(value: info.authenticationCallbackURL)
-                    }
+                    CopyText(value: authCallbackURL)
                 }
             }
         }
@@ -257,7 +252,7 @@ private struct ClusterAPICheck: View {
 private struct LogList: View {
     @Environment(\.octColors) private var colors
 
-    let logs: [Mobilev1.Log]
+    let logs: [LogEntry]
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 4) {
@@ -273,12 +268,12 @@ private struct LogList: View {
         .background(colors.surface2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
-    private func getColor(_ level: Mobilev1.Log.Level) -> Color {
+    private func getColor(_ level: LogLevel) -> Color {
         switch level {
         case .error: Color(hex: 0xF43F5E)
         case .warn: Color(hex: 0xF59E0B)
         case .debug: colors.faint
-        default: colors.body
+        case .info: colors.body
         }
     }
 }

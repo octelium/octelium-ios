@@ -1,4 +1,3 @@
-import OcteliumProto
 import XCTest
 
 @testable import OcteliumCore
@@ -6,25 +5,27 @@ import XCTest
 func getTestTunnelConfiguration(
     addresses: [String] = [],
     routes: [String] = [],
-    mtu: Int32 = 0,
+    mtu: Int = 0,
     dnsServers: [String]? = nil,
     searchDomains: [String] = [],
     matchDomains: [String] = [],
-    matchAllDomains: Bool = false
-) -> Mobilev1.TunnelConfiguration {
-    var ret = Mobilev1.TunnelConfiguration()
-    ret.addresses = addresses
-    ret.routes = routes
-    ret.mtu = mtu
-
-    if let dnsServers {
-        ret.dns.servers = dnsServers
-        ret.dns.searchDomains = searchDomains
-        ret.dns.matchDomains = matchDomains
-        ret.dns.matchAllDomains = matchAllDomains
-    }
-
-    return ret
+    matchAllDomains: Bool = false,
+    generation: UInt64 = 1
+) -> NetworkConfig {
+    NetworkConfig(
+        generation: generation,
+        addresses: addresses,
+        routes: routes,
+        dns: dnsServers.map {
+            DNSConfig(
+                servers: $0,
+                searchDomains: searchDomains,
+                matchDomains: matchDomains,
+                matchAllDomains: matchAllDomains
+            )
+        },
+        mtu: mtu
+    )
 }
 
 final class TunnelSpecTests: XCTestCase {

@@ -5,6 +5,20 @@ public enum Metav1 {
     public typealias DualStackNetwork = Octelium_Api_Main_Meta_V1_DualStackNetwork
 }
 
+public enum Authv1 {
+    public typealias SessionToken = Octelium_Api_Main_Auth_V1_SessionToken
+    public typealias ClientLoginRequest = Octelium_Api_Main_Auth_V1_ClientLoginRequest
+    public typealias ClientLoginResponse = Octelium_Api_Main_Auth_V1_ClientLoginResponse
+    public typealias AuthenticateWithAuthenticationTokenRequest = Octelium_Api_Main_Auth_V1_AuthenticateWithAuthenticationTokenRequest
+    public typealias AuthenticateWithRefreshTokenRequest = Octelium_Api_Main_Auth_V1_AuthenticateWithRefreshTokenRequest
+    public typealias LogoutRequest = Octelium_Api_Main_Auth_V1_LogoutRequest
+    public typealias LogoutResponse = Octelium_Api_Main_Auth_V1_LogoutResponse
+    public typealias RegisterDeviceBeginRequest = Octelium_Api_Main_Auth_V1_RegisterDeviceBeginRequest
+    public typealias RegisterDeviceBeginResponse = Octelium_Api_Main_Auth_V1_RegisterDeviceBeginResponse
+    public typealias RegisterDeviceFinishRequest = Octelium_Api_Main_Auth_V1_RegisterDeviceFinishRequest
+    public typealias RegisterDeviceFinishResponse = Octelium_Api_Main_Auth_V1_RegisterDeviceFinishResponse
+}
+
 public enum Userv1 {
     public typealias GetStatusRequest = Octelium_Api_Main_User_V1_GetStatusRequest
     public typealias GetStatusResponse = Octelium_Api_Main_User_V1_GetStatusResponse
@@ -14,6 +28,13 @@ public enum Userv1 {
     public typealias Namespace = Octelium_Api_Main_User_V1_Namespace
     public typealias NamespaceList = Octelium_Api_Main_User_V1_NamespaceList
     public typealias ListNamespaceOptions = Octelium_Api_Main_User_V1_ListNamespaceOptions
+    public typealias ConnectRequest = Octelium_Api_Main_User_V1_ConnectRequest
+    public typealias ConnectResponse = Octelium_Api_Main_User_V1_ConnectResponse
+    public typealias ConnectionState = Octelium_Api_Main_User_V1_ConnectionState
+    public typealias Gateway = Octelium_Api_Main_User_V1_Gateway
+    public typealias DNS = Octelium_Api_Main_User_V1_DNS
+    public typealias DisconnectRequest = Octelium_Api_Main_User_V1_DisconnectRequest
+    public typealias DisconnectResponse = Octelium_Api_Main_User_V1_DisconnectResponse
 }
 
 public enum Daemonv1 {
@@ -39,16 +60,6 @@ public enum Daemonv1 {
     public typealias ConnectionOptions = Octelium_Api_Client_Daemon_V1_ConnectionOptions
 }
 
-public enum Mobilev1 {
-    public typealias Config = Octelium_Api_Client_Mobile_V1_Config
-    public typealias GetInfoRequest = Octelium_Api_Client_Mobile_V1_GetInfoRequest
-    public typealias GetInfoResponse = Octelium_Api_Client_Mobile_V1_GetInfoResponse
-    public typealias CompleteAuthenticationRequest = Octelium_Api_Client_Mobile_V1_CompleteAuthenticationRequest
-    public typealias SetNetworkStateRequest = Octelium_Api_Client_Mobile_V1_SetNetworkStateRequest
-    public typealias SetNetworkStateResponse = Octelium_Api_Client_Mobile_V1_SetNetworkStateResponse
-    public typealias TunnelConfiguration = Octelium_Api_Client_Mobile_V1_TunnelConfiguration
-    public typealias PlatformRequest = Octelium_Api_Client_Mobile_V1_PlatformRequest
-    public typealias PlatformResponse = Octelium_Api_Client_Mobile_V1_PlatformResponse
-    public typealias Log = Octelium_Api_Client_Mobile_V1_Log
-    public typealias Event = Octelium_Api_Client_Mobile_V1_Event
+public enum Configv1 {
+    public typealias State = Octelium_Api_Client_Config_V1_State
 }

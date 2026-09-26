@@ -5,11 +5,14 @@ set -euo pipefail
 TARGET="${1:-}"
 SYMBOLS=(
   octelium_abi_version
-  octelium_client_new
-  octelium_client_call
-  octelium_client_complete_request
-  octelium_client_free
-  octelium_free
+  octelium_version
+  octelium_last_error
+  octelium_tunnel_new
+  octelium_tunnel_set_config
+  octelium_tunnel_set_network_state
+  octelium_tunnel_complete_request
+  octelium_tunnel_get_stats
+  octelium_tunnel_free
 )
 
 if [ -z "${TARGET}" ] || [ ! -d "${TARGET}" ]; then
