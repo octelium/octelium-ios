@@ -127,7 +127,7 @@ final class AsyncMutex: Sendable {
     }
 
     private func unlock() {
-        let next = state.withLock { st in
+        let next: CheckedContinuation<Void, Never>? = state.withLock { st in
             if st.waiters.isEmpty {
                 st.isLocked = false
                 return nil

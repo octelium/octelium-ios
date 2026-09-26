@@ -446,7 +446,13 @@ final class OcteliumClientTests: XCTestCase {
         let tunnel = try XCTUnwrap(tunnels.last)
         XCTAssertEqual(1, tunnels.all.count)
         try await awaitCondition { tunnel.configs.count == 2 }
-        XCTAssertEqual(2, cluster.initRequests.filter { if case .initialize = $0.type { true } else { false } }.count)
+        let initializeCount = cluster.initRequests.filter { req in
+            if case .initialize = req.type {
+                return true
+            }
+            return false
+        }.count
+        XCTAssertEqual(2, initializeCount)
         XCTAssertEqual(.succeeded, st.lastOperation.state)
 
         do {

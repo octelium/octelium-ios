@@ -22,6 +22,7 @@ generate-proto:
 	./scripts/generate-proto.sh
 
 check-generated: generate-proto
+	git add --intent-to-add -- OcteliumKit/Sources/OcteliumProto/Generated OcteliumKit/Sources/OcteliumAPI/Generated
 	git diff --exit-code -- OcteliumKit/Sources/OcteliumProto/Generated OcteliumKit/Sources/OcteliumAPI/Generated
 
 build-liboctelium:

@@ -29,6 +29,7 @@ jobs:
           set -euo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           ./scripts/generate-proto.sh
+          git add --intent-to-add -- OcteliumKit/Sources
           git diff --exit-code -- OcteliumKit/Sources
       - run: swift test --package-path OcteliumKit
 
@@ -58,6 +59,7 @@ jobs:
       - name: Build the host library
         env:
           CC: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
           LIBOCTELIUM_SOURCE_DIR: ${{ github.workspace }}/liboctelium-source
         run: ./scripts/build-host-libs.sh
       - name: Run the liboctelium integration tests

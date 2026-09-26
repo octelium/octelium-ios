@@ -131,7 +131,7 @@ public final class AppAuthenticator: Sendable {
     }
 
     private func fail(_ err: any Error) {
-        let waiter = state.withLock { st in
+        let waiter: CheckedContinuation<Authv1.ClientLoginResponse, any Error>? = state.withLock { st in
             guard let ret = st.waiter else {
                 st.err = err
                 return nil

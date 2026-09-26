@@ -24,14 +24,17 @@ found=0
 
 while IFS= read -r lib; do
   found=$((found + 1))
-  echo "Checking ${lib}: $(lipo -archs "${lib}")"
+  archs="$(lipo -archs "${lib}")"
+  echo "Checking ${lib}: ${archs}"
 
-  exported="$(nm -gU "${lib}" 2>/dev/null || true)"
-  for symbol in "${SYMBOLS[@]}"; do
-    if ! grep -q "_${symbol}$" <<< "${exported}"; then
-      echo "The symbol ${symbol} is not exported by ${lib}" >&2
-      exit 1
-    fi
+  for arch in ${archs}; do
+    exported="$(nm -gU --no-llvm-bc -arch "${arch}" "${lib}" || true)"
+    for symbol in "${SYMBOLS[@]}"; do
+      if ! grep -q "_${symbol}$" <<< "${exported}"; then
+        echo "The symbol ${symbol} is not exported by the ${arch} slice of ${lib}" >&2
+        exit 1
+      fi
+    done
   done
 done < <(find "${TARGET}" -name 'liboctelium.a' -type f)
 
